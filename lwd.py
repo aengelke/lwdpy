@@ -14,19 +14,19 @@ import cairo
 from model import Model, Function
 
 class GraphViewController(object):
-    def __init__(self, model, view):
+    def __init__(self, model, graphView):
         self.model = model
-        self.view = view
+        self.graphView = graphView
     def renameBasicBlock(self, basicBlock, newName):
         basicBlock.name = newName
         self.model.update_instructions()
-        self.view.update_cfg()
+        self.graphView.update_cfg()
     def renameFunction(self, function, newName):
         function.name = newName
         function.entry.name = newName
         self.model.update_instructions()
-        self.view.update_cfg()
-        self.view.update_table_entry(function)
+        self.graphView.update_cfg()
+        self.graphView.update_table_entry(function)
 
 
 # This is a bad practice, I know.
@@ -232,19 +232,12 @@ class LWControlFlowGraph(Gtk.Fixed):
                 ctx.fill()
 
 
-class Window(object):
+class LWGraphView(Gtk.Paned):
     def __init__(self, model):
+        super(LWGraphView, self).__init__()
         self.model = model
-        theController.model = model
-        theController.view = self
 
-        self.gtk = Gtk.Window()
-        self.gtk.set_title("LWD")
-        self.gtk.set_default_size(1024, 768)
-        self.gtk.connect("destroy", Gtk.main_quit)
-
-        self.paned = Gtk.Paned()
-
+        self.cfgView = None
         self.graphBin = Gtk.ScrolledWindow()
         self.graphBin.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self.store = Gtk.ListStore(str, str, int)
@@ -259,21 +252,13 @@ class Window(object):
         self.listBin = Gtk.ScrolledWindow()
         self.listBin.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.listBin.add(self.listView)
-        # self.stack = Gtk.Stack()
-        # self.stackSwitcher = Gtk.StackSidebar()
-        # self.stackSwitcher.set_stack(self.stack)
-        # hbox.pack_start(self.stackSwitcher, False, False, 0)
-        self.paned.pack1(self.listBin, False, False)
-        self.paned.pack2(self.graphBin, True, True)
+        self.pack1(self.listBin, False, False)
+        self.pack2(self.graphBin, True, True)
 
         for func in model.functions:
             self.add_function(func)
 
-        self.gtk.add(self.paned)
-        self.gtk.show_all()
-
     def _update_graph(self, selection):
-        global theController
         model, treeiter = selection.get_selected()
         if treeiter:
             addr = model[treeiter][2]
@@ -282,25 +267,51 @@ class Window(object):
             current = self.graphBin.get_child()
             if current: current.destroy()
 
-            self.graphView = LWControlFlowGraph(func)
-            self.graphView.show_all()
-
-            self.graphBin.add(self.graphView)
+            self.cfgView = LWControlFlowGraph(func)
+            self.cfgView.show_all()
+            self.graphBin.add(self.cfgView)
 
     def add_function(self, function):
         self.store.append([function.name, hex(function.address), function.address])
 
     def update_cfg(self):
-        self.graphView.update()
+        self.cfgView.update()
 
     def rebuild_cfg(self):
-        self.graphView.rebuild()
+        self.cfgView.rebuild()
 
     def update_table_entry(self, function):
         index = sorted(self.model.funcMap.keys()).index(function.address)
         treePath = Gtk.TreePath.new_from_indices([index])
         treeIter = self.store.get_iter(treePath)
         self.store.set(treeIter, 0, function.name)
+
+
+class Window(object):
+    def __init__(self, model):
+        self.model = model
+        self.graphView = LWGraphView(model)
+
+        theController.model = model
+        theController.graphView = self.graphView
+
+        self.gtk = Gtk.Window()
+        self.gtk.set_title("LWD")
+        self.gtk.set_default_size(1024, 768)
+        self.gtk.connect("destroy", Gtk.main_quit)
+
+        stack = Gtk.Stack()
+        stack.add_titled(self.graphView, "graphview", "CFG")
+        switcher = Gtk.StackSwitcher()
+        switcher.set_stack(stack)
+
+        headerBar = Gtk.HeaderBar()
+        headerBar.set_show_close_button(True)
+        headerBar.set_property("custom_title", switcher)
+
+        self.gtk.set_titlebar(headerBar)
+        self.gtk.add(stack)
+        self.gtk.show_all()
 
 
 css = """
