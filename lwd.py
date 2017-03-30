@@ -13,95 +13,157 @@ import cairo
 
 from model import Model, Function
 
-class LWBasicBlock(Gtk.EventBox):
+class GraphViewController(object):
+    def __init__(self, model, view):
+        self.model = model
+        self.view = view
+    def renameBasicBlock(self, basicBlock, newName):
+        basicBlock.name = newName
+        self.model.update_instructions()
+        self.view.update_cfg()
+    def renameFunction(self, function, newName):
+        function.name = newName
+        function.entry.name = newName
+        self.model.update_instructions()
+        self.view.update_cfg()
+        self.view.update_table_entry(function)
+
+
+# This is a bad practice, I know.
+theController = GraphViewController(None, None)
+
+class LWBasicBlockPopover(Gtk.PopoverMenu):
     def __init__(self, basicBlock):
-        super(LWBasicBlock, self).__init__()#Gtk.Orientation.VERTICAL, 0)
+        super(LWBasicBlockPopover, self).__init__()
+        self.basicBlock = basicBlock
+        self.menu = Gtk.Box()
+        self.menu.set_property("margin", 10)
+        self.menu.set_orientation(Gtk.Orientation.VERTICAL)
+        self.menu.set_homogeneous(False)
+        self.nameEntry = Gtk.Entry()
+        self.nameEntry.set_text(basicBlock.name)
+        nameBtn = Gtk.Button()
+        nameBtn.add(Gtk.Label("Change"))
+        nameBtn.set_property("can-default", True)
+        nameBtn.set_property("receives-default", True)
+        nameBtn.get_style_context().add_class("suggested-action")
+        nameBtn.connect("clicked", self._update_name)
+        nameBox = Gtk.Box(Gtk.Orientation.HORIZONTAL, 6)
+        nameBox.add(self.nameEntry)
+        nameBox.add(nameBtn)
+        self.menu.add(nameBox)
+        self.menu.show_all()
+        self.nameEntry.set_activates_default(True)
+        self.set_default_widget(nameBtn)
+        self.add(self.menu)
 
-        mnemonics = [instr.mnemonic for instr in basicBlock.instructions]
-        mnemonicLen = max(5, len(max(mnemonics, key=len)))
+    def add_properties(self):
+        pass
 
-        op_strs = ["".join(map(str, instr.op_str)) for instr in basicBlock.instructions]
-        displayText = "\n".join([a + ((mnemonicLen - len(a) + 1) * " " + b if b else "") for a, b in zip(mnemonics, op_strs)])
+    def _update_name(self, btn):
+        self.hide()
+        GLib.idle_add(theController.renameBasicBlock, self.basicBlock, self.nameEntry.get_text())
+
+class LWFunctionPopover(LWBasicBlockPopover):
+    def __init__(self, function):
+        super(LWFunctionPopover, self).__init__(function.entry)
+        self.function = function
+        noreturnBtn = Gtk.ModelButton()
+        noreturnBtn.set_property("role", Gtk.ButtonRole.CHECK)
+        noreturnBtn.set_property("text", "No Return")
+        noreturnBtn.show_all()
+        # separator = Gtk.Separator()
+        # separator.show()
+        # self.menu.add(separator)
+        # separator.set_property("fill", False)
+        self.menu.add(noreturnBtn)
+
+    def _update_name(self, btn):
+        self.hide()
+        GLib.idle_add(theController.renameFunction, self.function, self.nameEntry.get_text())
+
+class LWBasicBlock(Gtk.Box):
+    def __init__(self, function, basicBlock):
+        super(LWBasicBlock, self).__init__(Gtk.Orientation.VERTICAL, 0)
 
         self.model = basicBlock
-        self.bbHdr = Gtk.Box(Gtk.Orientation.HORIZONTAL, 0)
-        self.bbHdr.pack_start(Gtk.Label(basicBlock.name), False, False, 5)
-        self.bbHdr.pack_start(Gtk.Label(), True, True, 0)
+        self.bbHdr = Gtk.Box(Gtk.Orientation.HORIZONTAL, 5)
+        self.hdrLabel = Gtk.Label("")
+        hdrButton = Gtk.MenuButton()
+        hdrButton.add(self.hdrLabel)
+        hdrButton.get_style_context().add_class("flat")
+        if function.entry == basicBlock:
+            hdrButton.set_popover(LWFunctionPopover(function))
+        else:
+            hdrButton.set_popover(LWBasicBlockPopover(basicBlock))
+        self.bbHdr.pack_start(hdrButton, True, True, 0)
         self.bbHdr.get_style_context().add_class("header")
-        # self.bbHdrBox = Gtk.EventBox()
-        # self.bbHdrBox.add(self.bbHdr)
         self.content = Gtk.TextView()
         self.content.set_editable(False)
         self.content.set_can_focus(False)
         self.content.set_monospace(True)
         self.buffer = self.content.get_buffer()
+        self.set_homogeneous(False)
+        self.set_orientation(Gtk.Orientation.VERTICAL)
+        self.pack_start(self.bbHdr, False, False, 0)
+        self.pack_start(self.content, False, True, 0)
+
+        self.update()
+
+    def update(self):
+        self.hdrLabel.set_text(self.model.name)
+        mnemonics = [instr.mnemonic for instr in self.model.instructions]
+        mnemonicLen = max(5, len(max(mnemonics, key=len)))
+
+        op_strs = ["".join(map(str, instr.op_str)) for instr in self.model.instructions]
+        displayText = "\n".join([a + ((mnemonicLen - len(a) + 1) * " " + b if b else "") for a, b in zip(mnemonics, op_strs)])
+
         self.buffer.set_text(displayText)
-        self.box = Gtk.Box(Gtk.Orientation.VERTICAL, 0)
-        self.box.set_homogeneous(False)
-        self.box.set_orientation(Gtk.Orientation.VERTICAL)
-        self.set_can_focus(True)
-        self.set_focus_on_click(True)
-        self.box.pack_start(self.bbHdr, False, False, 0)
-        self.box.pack_start(self.content, False, True, 0)
-
-        # movement = { "sx": 0, "sy": 0 }
-        # self.bbHdrBox.connect("button-press-event", self._widget_button_press, movement)
-        # self.bbHdrBox.connect("button-release-event", self._widget_button_release, movement)
-        # self.bbHdrBox.connect("motion-notify-event", self._widget_motion, movement)
-        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-        self.add(self.box)
-
-    # def _widget_button_press(self, widget, event, movement):
-    #     if event.button == 1:
-    #         movement["sx"] = event.x_root - self.model.view["x"]
-    #         movement["sy"] = event.y_root - self.model.view["y"]
-    #     return True
-
-    # def _widget_button_release(self, widget, event, movement):
-    #     if event.button == 1:
-    #         self.model.view["x"] = event.x_root - movement["sx"]
-    #         self.model.view["y"] = event.y_root - movement["sy"]
-    #     return True
-
-    # def _widget_motion(self, widget, event, movement):
-    #     if event.state & Gdk.ModifierType.BUTTON1_MASK:
-    #         x = event.x_root - movement["sx"]
-    #         y = event.y_root - movement["sy"]
-    #         self.get_parent().move(self, x, y)
-    #         self.get_parent().queue_draw_area(x, y, self.get_allocated_width(), self.get_allocated_height())
-    #     return True
 
 LWBasicBlock.set_css_name("basicblock")
 
 
-class LWGraphView(Gtk.Fixed):
+class LWControlFlowGraph(Gtk.Fixed):
     BORDER_PADDING = 10
     def __init__(self, function):
-        super(LWGraphView, self).__init__()
+        super(LWControlFlowGraph, self).__init__()
         self.widgets = []
+        self.edges = []
+        self.function = function
         self.hasLayout = False
-        self.connect("size-allocate", self._on_size_allocate)
+        # self.connect("size-allocate", self._on_size_allocate)
         self.background = Gtk.DrawingArea()
         self.background.connect("draw", self._draw_background)
-        self.backgroundImage = None
-        self.put(self.background, LWGraphView.BORDER_PADDING, LWGraphView.BORDER_PADDING)
-        # print(dir(Gtk.Align))
+        # self.backgroundImage = None
+        self.put(self.background, self.BORDER_PADDING, self.BORDER_PADDING)
         self.set_property("halign", Gtk.Align.CENTER)
-        for bb in function.basicBlocks:
-            # if not bb.view: bb.view = { "x": 0, "y": 0 }
-            bbView = LWBasicBlock(bb)
-            bbView.connect("size-allocate", self._on_size_allocate)
-            self.put(bbView, 0, 0)
-            self.widgets.append(bbView)
         self.layoutTimeout = None
+        self.rebuild()
 
-    def _on_size_allocate(self, _1, _2):
-        if not self.hasLayout:
+    def rebuild(self):
+        self.hasLayout = False
+        for bbView in self.widgets: bbView.destroy()
+        self.widgets = []
+        for bb in self.function.basicBlocks:
+            bbView = LWBasicBlock(self.function, bb)
+            bbView.connect("size-allocate", self._on_size_allocate, [0, 0])
+            self.put(bbView, 0, -10000)
+            self.widgets.append(bbView)
+        if self.layoutTimeout: GLib.source_remove(self.layoutTimeout)
+        self.layoutTimeout = None
+        self.show_all()
+
+    def update(self):
+        for bbView in self.widgets: bbView.update()
+
+    def _on_size_allocate(self, bbView, allocation, oldSize):
+        if [allocation.width, allocation.height] != oldSize:
+            oldSize[0], oldSize[1] = allocation.width, allocation.height
             if self.layoutTimeout: GLib.source_remove(self.layoutTimeout)
-            self.layoutTimeout = GLib.timeout_add(100, self._auto_layout, True)
+            self.layoutTimeout = GLib.timeout_add(50, self._auto_layout, True)
 
     def _auto_layout(self, nodesPositions=False):
-        PADDING = LWGraphView.BORDER_PADDING
+        PADDING = LWControlFlowGraph.BORDER_PADDING
         bbMap = {}
         graph = graphviz.Digraph()
         graph.attr("graph", nodesep="20")
@@ -115,9 +177,6 @@ class LWGraphView(Gtk.Fixed):
                 "height": str(h),
                 "shape": "rectangle"
             }
-            # if not nodesPositions:
-            #     nodeArgs["pos"] = "{},{}!".format(bb.view["x"], bb.view["y"])
-            #     nodeArgs["pin"] = "true"
             graph.node(str(bbView.model.address), **nodeArgs)
 
         for i, bbView in enumerate(self.widgets):
@@ -129,71 +188,64 @@ class LWGraphView(Gtk.Fixed):
         rendered = [x.split() for x in graph.pipe("plain").decode().split("\n")[:-1]]
         totalWidth, totalHeight = map(int, map(float, (rendered[0][2:4])))
         nodes = [(int(x[1]), float(x[2]), float(x[3])) for x in rendered if x[0] == "node"]
-        edges = [x for x in rendered if x[0] == "edge"]
+        self.edges = [x for x in rendered if x[0] == "edge"]
 
         for addr, x, y in nodes:
             bbView, w, h = bbMap[addr]
-            self.move_nocheck(bbView, PADDING + int(x) - w/2, PADDING + totalHeight - int(y) - h/2)
+            self.move(bbView, PADDING + int(x) - w/2, PADDING + totalHeight - int(y) - h/2)
 
         self.background.set_size_request(totalWidth + PADDING, totalHeight + PADDING)
-        self.backgroundImage = cairo.ImageSurface(cairo.FORMAT_ARGB32, totalWidth, totalHeight)
-        ctx = cairo.Context(self.backgroundImage)
-
-        colors = {
-            "taken": (0, 0.6, 0),
-            "nottaken": (0.8, 0, 0),
-            "unco": (0, 0, 0.5),
-        }
-        for edge in edges:
-            count = int(edge[3])
-            coords = list(map(lambda x: tuple(map(float, x)), zip(edge[4:4+2*count:2], edge[5:5+2*count:2])))
-            for x, y in coords: ctx.line_to(x, totalHeight - y)
-            ctx.set_source_rgb(*colors[edge[-5]])
-            ctx.stroke()
-            angle = math.atan2(coords[-1][1] - coords[-2][1], coords[-2][0] - coords[-1][0])
-            pos1DX, pos1DY = math.cos(angle + 0.5) * 15, math.sin(angle + 0.5) * 15
-            pos2DX, pos2DY = math.cos(angle - 0.5) * 15, math.sin(angle - 0.5) * 15
-            targetX, targetY = coords[-1][0], totalHeight - coords[-1][1]
-            ctx.move_to(targetX, targetY)
-            ctx.line_to(targetX + pos1DX, targetY + pos1DY)
-            ctx.line_to(targetX + pos2DX, targetY + pos2DY)
-            ctx.close_path()
-            ctx.fill()
-
         self.background.queue_draw()
 
         self.layoutTimeout = None
         self.hasLayout = True
 
     def _draw_background(self, widget, ctx):
-        if self.backgroundImage:
-            ctx.set_source_surface(self.backgroundImage)
-            ctx.paint()
+        if len(self.edges) > 0:
+            styleCtx = widget.get_style_context()
+            def get_color(name, fallback):
+                ok, color = styleCtx.lookup_color(name)
+                if ok: return color.red, color.green, color.blue, color.alpha
+                return fallback
 
-    def move_nocheck(self, widget, x, y):
-        # widget.model.view["x"] = x
-        # widget.model.view["y"] = y
-        super(LWGraphView, self).move(widget, x, y)
+            colors = {
+                "taken": get_color("success_color", (0, 0.6, 0, 1)),
+                "nottaken": get_color("error_color", (0.8, 0, 0, 1)),
+                "unco": get_color("theme_fg_color", (0, 0, 0.5)),
+            }
 
-    def move(self, widget, x, y):
-        self.move_nocheck(widget, x, y)
-        # if self.layoutTimeout: GLib.source_remove(self.layoutTimeout)
-        # self.layoutTimeout = GLib.timeout_add_seconds(1, self._auto_layout, False)
-
-LWGraphView.set_css_name("graphview")
+            totalHeight = widget.get_allocated_height() - self.BORDER_PADDING
+            for edge in self.edges:
+                count = int(edge[3])
+                coords = list(map(lambda x: tuple(map(float, x)), zip(edge[4:4+2*count:2], edge[5:5+2*count:2])))
+                for x, y in coords: ctx.line_to(x, totalHeight - y)
+                ctx.set_source_rgba(*colors[edge[-5]])
+                ctx.stroke()
+                angle = math.atan2(coords[-1][1] - coords[-2][1], coords[-2][0] - coords[-1][0])
+                pos1DX, pos1DY = math.cos(angle + 0.5) * 15, math.sin(angle + 0.5) * 15
+                pos2DX, pos2DY = math.cos(angle - 0.5) * 15, math.sin(angle - 0.5) * 15
+                targetX, targetY = coords[-1][0], totalHeight - coords[-1][1]
+                ctx.move_to(targetX, targetY)
+                ctx.line_to(targetX + pos1DX, targetY + pos1DY)
+                ctx.line_to(targetX + pos2DX, targetY + pos2DY)
+                ctx.close_path()
+                ctx.fill()
 
 
 class Window(object):
     def __init__(self, model):
         self.model = model
+        theController.model = model
+        theController.view = self
+
         self.gtk = Gtk.Window()
         self.gtk.set_title("LWD")
         self.gtk.set_default_size(1024, 768)
         self.gtk.connect("destroy", Gtk.main_quit)
 
-        self.paned = Gtk.Paned()#Gtk.Orientation.HORIZONTAL)
+        self.paned = Gtk.Paned()
 
-        self.graphBin = Gtk.ScrolledWindow(None, None)
+        self.graphBin = Gtk.ScrolledWindow()
         self.graphBin.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self.store = Gtk.ListStore(str, str, int)
         self.listView = Gtk.TreeView(self.store)
@@ -204,7 +256,7 @@ class Window(object):
         self.listView.append_column(listColName)
         self.listView.append_column(listColAddr)
         self.listView.get_selection().connect("changed", self._update_graph)
-        self.listBin = Gtk.ScrolledWindow(None, None)
+        self.listBin = Gtk.ScrolledWindow()
         self.listBin.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.listBin.add(self.listView)
         # self.stack = Gtk.Stack()
@@ -221,44 +273,47 @@ class Window(object):
         self.gtk.show_all()
 
     def _update_graph(self, selection):
+        global theController
         model, treeiter = selection.get_selected()
         if treeiter:
             addr = model[treeiter][2]
             func = self.model.funcMap[addr]
+
             current = self.graphBin.get_child()
             if current: current.destroy()
-            graphView = LWGraphView(func)
-            # self.graphBin = Gtk.ScrolledWindow(None, None)
-            # self.graphBin.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            self.graphBin.add(graphView)
-            graphView.show_all()
-            # self.paned.pack2(self.graphBin)
-            print("Show CFG for", hex(addr), func.name)
 
-        # print(selection.get_user_data())
+            self.graphView = LWControlFlowGraph(func)
+            self.graphView.show_all()
+
+            self.graphBin.add(self.graphView)
 
     def add_function(self, function):
         self.store.append([function.name, hex(function.address), function.address])
-        # graphView = LWGraphView(function)
-        # scrolled.add(graphView)
-        # self.stack.add_titled(scrolled, "fn_" + hex(function.address)[2:], function.name)
+
+    def update_cfg(self):
+        self.graphView.update()
+
+    def rebuild_cfg(self):
+        self.graphView.rebuild()
+
+    def update_table_entry(self, function):
+        index = sorted(self.model.funcMap.keys()).index(function.address)
+        treePath = Gtk.TreePath.new_from_indices([index])
+        treeIter = self.store.get_iter(treePath)
+        self.store.set(treeIter, 0, function.name)
 
 
 css = """
-LWBasicBlock { background: #fff }
-
-graphview {
-    padding: 10px;
-}
-basicblock > box {
-    background: #ffffff;
-    border: 1px solid #000000;
-}
-basicblock:focus box {
-    background: #f00;
+basicblock {
+    background: @theme_base_color;
+    border: 1px solid @borders;
 }
 basicblock .header {
-    border-bottom: 1px solid #000000;
+    border-bottom: 1px solid @borders;
+}
+basicblock .header button {
+    border: none;
+    border-radius: 0;
 }
 basicblock textview {
     padding: 10px;
