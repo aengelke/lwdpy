@@ -18,9 +18,9 @@ class LWBasicBlock(Gtk.EventBox):
         super(LWBasicBlock, self).__init__()#Gtk.Orientation.VERTICAL, 0)
 
         mnemonics = [instr.mnemonic for instr in basicBlock.instructions]
-        op_strs = [instr.op_str for instr in basicBlock.instructions]
         mnemonicLen = max(5, len(max(mnemonics, key=len)))
 
+        op_strs = ["".join(map(str, instr.op_str)) for instr in basicBlock.instructions]
         displayText = "\n".join([a + ((mnemonicLen - len(a) + 1) * " " + b if b else "") for a, b in zip(mnemonics, op_strs)])
 
         self.model = basicBlock
@@ -118,7 +118,6 @@ class LWGraphView(Gtk.Fixed):
             # if not nodesPositions:
             #     nodeArgs["pos"] = "{},{}!".format(bb.view["x"], bb.view["y"])
             #     nodeArgs["pin"] = "true"
-            print(nodeArgs)
             graph.node(str(bbView.model.address), **nodeArgs)
 
         for i, bbView in enumerate(self.widgets):
@@ -131,7 +130,6 @@ class LWGraphView(Gtk.Fixed):
         totalWidth, totalHeight = map(int, map(float, (rendered[0][2:4])))
         nodes = [(int(x[1]), float(x[2]), float(x[3])) for x in rendered if x[0] == "node"]
         edges = [x for x in rendered if x[0] == "edge"]
-        print(edges)
 
         for addr, x, y in nodes:
             bbView, w, h = bbMap[addr]
@@ -226,7 +224,7 @@ class Window(object):
         model, treeiter = selection.get_selected()
         if treeiter:
             addr = model[treeiter][2]
-            func = [f for f in self.model.functions if f.address == addr][0]
+            func = self.model.funcMap[addr]
             current = self.graphBin.get_child()
             if current: current.destroy()
             graphView = LWGraphView(func)
@@ -280,7 +278,6 @@ def main():
     model.functions.sort(key=lambda f: f.address)
 
     style_provider = Gtk.CssProvider()
-    # style_provider.load_from_data(css)
     style_provider.load_from_data(css.encode())
 
     Gtk.StyleContext.add_provider_for_screen(
@@ -289,12 +286,13 @@ def main():
         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
 
+    # TODO: Use Gtk.Application
     wnd = Window(model)
 
     Gtk.main()
 
     # print(options.file[0])
-    return 1
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())

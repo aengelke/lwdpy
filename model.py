@@ -1,4 +1,5 @@
 
+from collections import namedtuple
 import io
 import os
 
@@ -6,7 +7,61 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 from capstone import *
+from capstone import _cs
 from capstone.x86 import *
+
+class OperandKind(object):
+    UNKNOWN = 0
+    REG = 1
+    IMM_SDEC = 2
+    IMM_UDEC = 3
+    IMM_HEX = 4
+    ADDR = 5
+    ADDR_CSTR = 6
+
+class Region(object):
+    KIND_NONE = 0
+    KIND_REG = 1
+    KIND_IMM = 2
+    KIND_ADDR = 3
+    KIND_FUNC = 4
+    KIND_BB = 5
+    def __init__(self, text, kind=KIND_NONE):
+        self.text = text
+        self.kind = kind
+    def __str__(self):
+        return self.text
+
+MemOperand = namedtuple("Operand", ["base", "index", "scale", "disp", "segment"])
+Operand = namedtuple("Operand", ["kind", "type", "size", "reg", "imm", "mem"])
+
+class Instruction(object):
+    def __init__(self, cs):
+        # self.cs = cs
+        self.id = cs.id
+        self.address = cs.address
+        self.size = cs.size
+        self.operands = []
+        for op in cs.operands:
+            if op.type == X86_OP_MEM:
+                if op.mem.base == X86_REG_RIP:
+                    memOp = MemOperand(0, 0, 0, cs.address + cs.size + op.mem.disp, op.mem.segment)
+                    kinds = [OperandKind.ADDR]
+                else:
+                    memOp = MemOperand(op.mem.base, op.mem.index, op.mem.scale, op.mem.disp, op.mem.segment)
+                    kinds = [OperandKind.IMM_HEX if op.mem.base else OperandKind.ADDR]
+                self.operands.append(Operand(kinds, op.type, op.size, None, None, memOp))
+            elif op.type == X86_OP_REG:
+                self.operands.append(Operand([OperandKind.REG], op.type, op.size, op.reg, None, None))
+            elif op.type == X86_OP_IMM:
+                kind = OperandKind.IMM_HEX
+                if X86_GRP_JUMP in cs.groups or X86_GRP_CALL in cs.groups: kind = OperandKind.ADDR
+                self.operands.append(Operand([kind], op.type, op.size, None, op.imm, None))
+        self.mnemonic = cs.mnemonic
+        self.op_str = []
+        self.csStr = cs.op_str
+        self.userComment = ""
+        self.autoComment = ""
 
 class ELFReader(object):
     def __init__(self, binary):
@@ -30,7 +85,7 @@ class ELFReader(object):
         except Exception:
             print("Cannot decode:", stream, hex(self.vaddr))
         self.vseek(self.vaddr + disas.size)
-        return disas
+        return Instruction(disas)
     def get_symbol(self, symbolName):
         symtab = self.elf.get_section_by_name(".symtab")
         if not symtab or not isinstance(symtab, SymbolTableSection):
@@ -100,12 +155,11 @@ class Function(object):
         self.addrMap = {}
         self.address = addr
         self.name = name if name else "fn_" + hex(addr)[2:]
+        self.isPLT = isPLT
+
         self.entry = self.recoverCFG(elf, addr)
         self.entry.name = self.name
         self.basicBlocks.sort(key=lambda bb: bb.address)
-        self.isPLT = isPLT
-        self.isLib = False
-        # self.dump()
 
     def dump(self):
         for bb in self.basicBlocks:
@@ -163,19 +217,20 @@ class Function(object):
                     self.addrMap[lastInstr.address].branchFalse = btrue
                 else:
                     self.addrMap[lastInstr.address].branchTrue = btrue
-            else:
-                print("unhandled jump operand " + instr.op_str)
+            elif not self.isPLT:
+                print("unhandled jump operand " + instr.csStr)
 
         return bb
-        # print(instr.mnemonic, instr.op_str)
 
 class Model(object):
     def __init__(self, binaryFile, **kwargs):
         self.binaryFile = binaryFile
         self.elf = ELFReader(binaryFile)
         self.functions = []
+        self.funcMap = {}
         self.parse_plt(".plt", ".rela.plt", 0x10, 0x10)
         self.parse_plt(".plt.got", ".rela.dyn", 0, 0x8)
+        self.update_instructions()
 
     def parse_plt(self, pltName, relaName, skip, offset):
         plt = self.elf.get_section(pltName)
@@ -187,8 +242,8 @@ class Model(object):
                 self.elf.vseek(plt["sh_addr"] + i)
                 instr = self.elf.vreadInstr()
                 if instr.id == X86_INS_JMP and instr.operands[0].type == X86_OP_MEM and \
-                    instr.operands[0].mem.base == X86_REG_RIP:
-                    gotEntryAddr = instr.address + instr.size + instr.operands[0].mem.disp
+                    not instr.operands[0].mem.base and not instr.operands[0].mem.index:
+                    gotEntryAddr = instr.operands[0].mem.disp
 
                     relocation = None
                     for rela in relaDyn.iter_relocations():
@@ -200,8 +255,9 @@ class Model(object):
                         continue
 
                     symName = symtab.get_symbol(relocation["r_info_sym"]).name
-                    print("Relocation entry @", hex(instr.address), "for", symName)
-                    self.functions.append(Function(self.elf, instr.address, "plt@" + symName, isPLT=True))
+                    func = Function(self.elf, instr.address, symName + "@plt", isPLT=True)
+                    self.functions.append(func)
+                    self.funcMap[instr.address] = func
                 else:
                     print("Could not parse PLT entry @", hex(plt["sh_addr"] + i))
 
@@ -222,7 +278,77 @@ class Model(object):
                 if symbol["st_value"] == address:
                     name = symbol.name
                     break
-        self.functions.append(Function(self.elf, address, name))
+        func = Function(self.elf, address, name)
+        self.functions.append(func)
+        self.funcMap[address] = func
+        self.update_instructions()
         return self.functions[-1]
 
+    def update_instructions(self):
+        for func in self.functions:
+            for bb in func.basicBlocks:
+                for instr in bb.instructions:
+                    self.handle_instruction(instr, func)
 
+    def reg_name(self, reg):
+        return _cs.cs_reg_name(self.elf.cs.csh, reg).decode()
+
+    def regionize_address(self, address):
+        if address in self.funcMap:
+            return Region(self.funcMap[address].name, kind=Region.KIND_FUNC)
+        for func in self.functions:
+            if address in func.addrMap:
+                bb = func.addrMap[address]
+                if bb.address != address: raise Exception("bb address != op imm, jump into bb!")
+                return Region(bb.name, kind=Region.KIND_BB)
+        return Region(hex(address), kind=Region.KIND_ADDR)
+
+    def regionize_immediate(self, imm, kind):
+        if kind == OperandKind.ADDR:
+            return self.regionize_address(imm)
+        elif kind == OperandKind.IMM_HEX:
+            return Region(hex(imm), kind=Region.KIND_IMM)
+        elif kind == OperandKind.IMM_SDEC:
+            return Region(imm, kind=Region.KIND_IMM)
+        else: raise Exception("not reached")
+
+    def regionize_operand(self, op):
+        regions = []
+        if op.type == X86_OP_REG:
+            regions.append(Region(self.reg_name(op.reg), kind=Region.KIND_REG))
+        elif op.type == X86_OP_IMM:
+            regions.append(self.regionize_immediate(op.imm, op.kind[0]))
+        elif op.type == X86_OP_MEM:
+            sizeName = { 1: "byte", 2: "word", 4: "dword", 8: "qword", 16: "xmmword" }
+            if op.size in sizeName: sizeName = sizeName[op.size]
+            else: sizeName = "SZ" + op.size
+            regions.append(Region(sizeName + " "))
+            if op.mem.segment:
+                regions.append(Region(self.reg_name(op.mem.segment), kind=Region.KIND_REG))
+                regions.append(Region(":"))
+            regions.append(Region("["))
+            hasComp = False
+            if op.mem.base:
+                regions.append(Region(self.reg_name(op.mem.base), kind=Region.KIND_REG))
+                hasComp = True
+            if op.mem.index:
+                if hasComp: regions.append(Region(" + "))
+                if op.mem.scale != 1: regions.append(Region(str(op.mem.scale) + "*"))
+                regions.append(Region(self.reg_name(op.mem.index), kind=Region.KIND_REG))
+                hasComp = True
+            if op.mem.disp or not hasComp:
+                if hasComp:
+                    regions.append(Region(" + " if op.mem.disp >= 0 else " - "))
+                    regions.append(self.regionize_immediate(abs(op.mem.disp), op.kind[0]))
+                else:
+                    regions.append(self.regionize_immediate(op.mem.disp, op.kind[0]))
+            regions.append(Region("]"))
+        else: regions.append(Region("UNKNOWN"))
+        return regions
+
+    def handle_instruction(self, instr, parentFunc):
+        regions = []
+        for i, op in enumerate(instr.operands):
+            if i != 0: regions.append(Region(", "))
+            regions += self.regionize_operand(op)
+        instr.op_str = regions
