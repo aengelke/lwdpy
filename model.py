@@ -41,20 +41,23 @@ class OperandKind(object):
     IMM_HEX = 4
     ADDR = 5
     ADDR_CSTR = 6
+    @staticmethod
+    def isAddress(kind):
+        return kind in (OperandKind.ADDR, OperandKind.ADDR_CSTR)
 
-class Region(object):
+class Region(namedtuple("Region", "text,kind,meta")):
     KIND_NONE = 0
     KIND_REG = 1
-    KIND_IMM = 2
-    KIND_ADDR = 3
-    KIND_FUNC = 4
-    KIND_BB = 5
-    def __init__(self, text, kind=KIND_NONE, meta=None):
-        self.text = text
-        self.kind = kind
-        self.meta = meta
-    def __str__(self):
-        return self.text
+    KIND_DATA = 2
+    KIND_CODE_ADDR = 3
+    KIND_CODE_INDIRECT = 4
+    def __new__(self, text, kind=KIND_NONE, meta=None):
+        return super(Region, self).__new__(self, text, kind, meta)
+    def isImmediate(self):
+        return self.kind == Region.KIND_DATA
+    def isStatic(self):
+        return self.kind == Region.KIND_NONE
+
 
 MemOperand = namedtuple("Operand", ["base", "index", "scale", "disp", "segment"])
 Operand = namedtuple("Operand", ["kind", "type", "size", "reg", "imm", "mem"])
@@ -180,6 +183,7 @@ class Function(object):
         self.address = addr
         self.name = name if name else "fn_" + hex(addr)[2:]
         self.isPLT = isPLT
+        # self.args = []
 
         self.entry = self.recoverCFG(elf, addr)
         self.entry.name = self.name
@@ -312,36 +316,38 @@ class Model(object):
         for func in self.functions:
             for bb in func.basicBlocks:
                 for instr in bb.instructions:
-                    self.handle_instruction(instr, func)
+                    self.update_instruction(instr)
 
     def reg_name(self, reg):
         return _cs.cs_reg_name(self.elf.cs.csh, reg).decode()
 
     def regionize_address(self, operand, address):
         if address in self.funcMap:
-            return Region(self.funcMap[address].name, kind=Region.KIND_FUNC, meta=operand)
+            return Region(self.funcMap[address].name, kind=Region.KIND_DATA, meta=operand)
         for func in self.functions:
             if address in func.addrMap:
                 bb = func.addrMap[address]
                 if bb.address != address: raise Exception("bb address != op imm, jump into bb!")
-                return Region(bb.name, kind=Region.KIND_BB, meta=operand)
-        return Region(hex(address), kind=Region.KIND_ADDR, meta=operand)
+                return Region(bb.name, kind=Region.KIND_DATA, meta=operand)
+        return Region(hex(address), kind=Region.KIND_DATA, meta=operand)
 
-    def regionize_immediate(self, operand, imm, kind):
-        if kind == OperandKind.ADDR:
+    def regionize_immediate(self, operand, imm):
+        if OperandKind.isAddress(operand.kind[0]):
             return self.regionize_address(operand, imm)
-        elif kind == OperandKind.IMM_HEX:
-            return Region(hex(imm), kind=Region.KIND_IMM, meta=operand)
-        elif kind == OperandKind.IMM_SDEC:
-            return Region(imm, kind=Region.KIND_IMM, meta=operand)
+        elif operand.kind[0] == OperandKind.IMM_HEX:
+            return Region(hex(imm), kind=Region.KIND_DATA, meta=operand)
+        elif operand.kind[0] == OperandKind.IMM_SDEC:
+            return Region(str(imm), kind=Region.KIND_DATA, meta=operand)
         else: raise Exception("not reached")
 
     def regionize_operand(self, op):
         regions = []
+        immediate = None
         if op.type == X86_OP_REG:
             regions.append(Region(self.reg_name(op.reg), kind=Region.KIND_REG, meta=op.reg))
         elif op.type == X86_OP_IMM:
-            regions.append(self.regionize_immediate(op, op.imm, op.kind[0]))
+            regions.append(self.regionize_immediate(op, op.imm))
+            immediate = op.imm
         elif op.type == X86_OP_MEM:
             sizeName = { 1: "byte", 2: "word", 4: "dword", 8: "qword", 16: "xmmword" }
             if op.size in sizeName: sizeName = sizeName[op.size]
@@ -363,16 +369,31 @@ class Model(object):
             if op.mem.disp or not hasComp:
                 if hasComp:
                     regions.append(Region(" + " if op.mem.disp >= 0 else " - "))
-                    regions.append(self.regionize_immediate(op, abs(op.mem.disp), op.kind[0]))
+                    regions.append(self.regionize_immediate(op, abs(op.mem.disp)))
+                    if op.mem.disp > 0: immediate = op.mem.disp
                 else:
-                    regions.append(self.regionize_immediate(op, op.mem.disp, op.kind[0]))
+                    regions.append(self.regionize_immediate(op, op.mem.disp))
+                    immediate = op.mem.disp
             regions.append(Region("]"))
         else: regions.append(Region("UNKNOWN"))
-        return regions
+        return regions, immediate
 
-    def handle_instruction(self, instr, parentFunc):
+    def update_instruction(self, instr):
         regions = []
         for i, op in enumerate(instr.operands):
             if i != 0: regions.append(Region(", "))
-            regions += self.regionize_operand(op)
+            newRegions, immediate = self.regionize_operand(op)
+            regions += newRegions
+            if op.kind[0] == OperandKind.ADDR_CSTR:
+                try:
+                    self.elf.vseek(immediate)
+                    data = self.elf.vread(20)
+                    if data.find(b"\0") >= 0:
+                        data = repr(data[:data.find(b"\x00")].decode())
+                    else:
+                        data = repr(data.decode()) + "..."
+                    instr.autoComment = data
+                except Exception:
+                    instr.autoComment = "addr not readable"
+            else: instr.autoComment = ""
         instr.op_str = regions

@@ -11,7 +11,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import GLib, Gtk, Gdk
 import cairo
 
-from model import Region, Model, Function, registerEqual
+from model import OperandKind, Region, Model, Function, registerEqual
 
 class GraphViewController(object):
     def __init__(self, model, graphView):
@@ -28,6 +28,11 @@ class GraphViewController(object):
         self.model.update_instructions()
         self.graphView.update_cfg()
         self.graphView.update_table_entry(function)
+    def updateOperandKind(self, instr, operand, newKind):
+        operand.kind[0] = newKind
+        self.model.update_instruction(instr)
+        self.graphView.update_cfg()
+
     def highlightRegion(self, region):
         for lwop in self.graphView.cfgView.iter_operands(region.kind):
             highlight = False
@@ -69,11 +74,8 @@ class LWBasicBlockPopover(Gtk.PopoverMenu):
         self.set_default_widget(nameBtn)
         self.add(self.menu)
 
-    def add_properties(self):
-        pass
-
     def _update_name(self, btn):
-        self.hide()
+        self.popdown()
         GLib.idle_add(theController.renameBasicBlock, self.basicBlock, self.nameEntry.get_text())
 
 class LWFunctionPopover(LWBasicBlockPopover):
@@ -91,39 +93,104 @@ class LWFunctionPopover(LWBasicBlockPopover):
         self.menu.add(noreturnBtn)
 
     def _update_name(self, btn):
-        self.hide()
+        self.popdown()
         GLib.idle_add(theController.renameFunction, self.function, self.nameEntry.get_text())
 
+class LWOperandPopover(Gtk.PopoverMenu):
+    def __init__(self, instr, region):
+        super(LWOperandPopover, self).__init__()
+        self.instruction = instr
+        self.menu = Gtk.Box()
+        self.menu.set_property("margin", 10)
+        self.menu.set_orientation(Gtk.Orientation.VERTICAL)
+        self.menu.set_homogeneous(False)
+        if region.kind == Region.KIND_DATA:
+            self.addrBtn = Gtk.ModelButton()
+            self.addrBtn.set_property("role", Gtk.ButtonRole.CHECK)
+            self.addrBtn.set_property("text", "Address")
+            self.addrBtn.connect("clicked", self._update_kind, "address")
+            self.menu.add(self.addrBtn)
+            self.menu.add(Gtk.Separator())
+            self.cstrBtn = Gtk.ModelButton()
+            self.cstrBtn.set_property("role", Gtk.ButtonRole.CHECK)
+            self.cstrBtn.set_property("text", "C String")
+            self.cstrBtn.connect("clicked", self._update_kind, "cstr")
+            self.menu.add(self.cstrBtn)
+            self.gotoHexBtn = Gtk.ModelButton()
+            self.gotoHexBtn.set_property("text", "Show in Dump")
+            self.menu.add(self.gotoHexBtn)
+            self.decimalBtn = Gtk.ModelButton()
+            self.decimalBtn.set_property("role", Gtk.ButtonRole.CHECK)
+            self.decimalBtn.set_property("text", "Decimal")
+            self.decimalBtn.connect("clicked", self._update_kind, "decimal")
+            self.menu.add(self.decimalBtn)
+        self.menu.show_all()
+        self.update(region)
+        self.add(self.menu)
 
-class LWInstrOperand(Gtk.Bin):
-    def __init__(self, region):
-        super(LWInstrOperand, self).__init__()
+    def _update_kind(self, widget, property):
+        if self.region.kind == Region.KIND_DATA:
+            lut = {
+                ("address", True): OperandKind.ADDR,
+                ("address", False): OperandKind.IMM_HEX,
+                ("cstr", True): OperandKind.ADDR_CSTR,
+                ("cstr", False): OperandKind.ADDR,
+                ("decimal", True): OperandKind.IMM_SDEC,
+                ("decimal", False): OperandKind.IMM_HEX,
+            }
+            op = self.region.meta
+            key = property, not widget.get_property("active")
+            currentKind = op.kind[0]
+            newKind = lut[key] if key in lut else currentKind
+            if newKind != currentKind:
+                theController.updateOperandKind(self.instruction, op, newKind)
+
+    def update(self, region):
         self.region = region
-        if region.kind == Region.KIND_NONE:
-            child = Gtk.Label(region.text)
-            child.get_style_context().add_class("lw-dim")
-        else:
-            child = Gtk.Button(region.text)
-            def highlight(self, widget):
-                GLib.idle_add(theController.highlightRegion, region)
-            def highlightClear(self, widget):
-                GLib.idle_add(theController.highlightClear)
-            child.connect("focus-in-event", highlight)
-            child.connect("focus-out-event", highlightClear)
-        self.add(child)
+        if region.kind == Region.KIND_DATA:
+            operandKind = region.meta.kind[0]
+            isAddress = OperandKind.isAddress(operandKind)
+            self.addrBtn.set_property("active", isAddress)
+            if isAddress:
+                self.cstrBtn.show()
+                self.gotoHexBtn.show()
+                self.decimalBtn.hide()
+                self.cstrBtn.set_property("active", operandKind == OperandKind.ADDR_CSTR)
+            else:
+                self.cstrBtn.hide()
+                self.gotoHexBtn.hide()
+                self.decimalBtn.show()
+                self.decimalBtn.set_property("active", operandKind == OperandKind.IMM_SDEC)
+
+
+class LWInstrOperand(Gtk.Button):
+    def __init__(self, instr, region):
+        super(LWInstrOperand, self).__init__()
+        self.instruction = instr
+        self.region = region
+        self.popover = LWOperandPopover(instr, region)
+        self.popover.set_relative_to(self)
+        self.connect("focus-in-event", self._focus_handler, True)
+        self.connect("focus-out-event", self._focus_handler, False)
+        self.connect("button-press-event", self._handle_click)
         self.get_style_context().add_class("lw-operand")
         self.get_style_context().add_class("lw-monospace")
 
-class LWInstrOperands(Gtk.Box):
-    def __init__(self, instr):
-        super(LWInstrOperands, self).__init__(Gtk.Orientation.HORIZONTAL, 0)
-        self.instr = instr
-        self.operands = []
-        for region in instr.op_str:
-            op = LWInstrOperand(region)
-            self.operands.append(op)
-            self.pack_start(op, False, False, 0)
+    def update(self, instr, region):
+        if self.region.kind != region.kind: raise Exception("operand region kind changed")
+        self.region = region
+        self.set_label(region.text)
 
+        if self.popover: self.popover.update(region)
+
+    def _focus_handler(self, widget, event, gained):
+        if not self.region: return
+        if gained: GLib.idle_add(theController.highlightRegion, self.region)
+        else: GLib.idle_add(theController.highlightClear)
+
+    def _handle_click(self, _, event):
+        if event.type == Gdk.EventType.BUTTON_PRESS and event.button == Gdk.BUTTON_SECONDARY:
+            if self.popover: self.popover.popup()
 
 
 class LWBasicBlock(Gtk.Box):
@@ -165,16 +232,31 @@ class LWBasicBlock(Gtk.Box):
             mnemonicLabel = Gtk.Label(instr.mnemonic)
             mnemonicLabel.set_property("xalign", 0.0)
             mnemonicLabel.get_style_context().add_class("lw-monospace")
+            operandsBox = Gtk.Box()
+            operands = []
+            for region in instr.op_str:
+                if region.isStatic():
+                    label = Gtk.Label(region.text)
+                    label.get_style_context().add_class("lw-dim")
+                    label.get_style_context().add_class("lw-monospace")
+                    operands.append(None)
+                    operandsBox.pack_start(label, False, False, 0)
+                else:
+                    regionView = LWInstrOperand(instr, region)
+                    operands.append(regionView)
+                    operandsBox.pack_start(regionView, False, False, 0)
             commentLabel = Gtk.Label()
             commentLabel.set_property("xalign", 0.0)
             commentLabel.get_style_context().add_class("lw-dim")
             commentLabel.get_style_context().add_class("lw-monospace")
             line.pack_start(mnemonicLabel, False, False, 0)
+            line.pack_start(operandsBox, False, False, 0)
             line.pack_end(commentLabel, False, False, 0)
             sg1.add_widget(mnemonicLabel)
+            sg2.add_widget(operandsBox)
             sg3.add_widget(commentLabel)
             self.content.add(line)
-            self.instructions.append([line, None, commentLabel])
+            self.instructions.append([line, operands, commentLabel])
         self.update() # Fill actual data
 
         self.content.show_all()
@@ -183,10 +265,10 @@ class LWBasicBlock(Gtk.Box):
     def update(self):
         self.hdrLabel.set_text(self.model.name)
         for instr, view in zip(self.model.instructions, self.instructions):
-            if view[1]: view[1].destroy()
-            view[1] = LWInstrOperands(instr)
-            view[1].show_all()
-            view[0].pack_start(view[1], False, False, 0)
+            for region, regionView in zip(instr.op_str, view[1]):
+                if region.isStatic(): continue
+                regionView.update(self.model, region)
+
             commentStr = instr.userComment
             if commentStr and instr.autoComment: commentStr += " | "
             commentStr += instr.autoComment
@@ -196,8 +278,8 @@ class LWBasicBlock(Gtk.Box):
 
     def iter_operands(self, kind):
         for instrView in self.instructions:
-            for op in instrView[1].operands:
-                if op.region.kind == kind:
+            for op in instrView[1]:
+                if op and op.region.kind == kind:
                     yield op
 
 LWBasicBlock.set_css_name("basicblock")
@@ -418,13 +500,13 @@ basicblock .header button {
 .lw-dim:backdrop {
     color: @unfocused_insensitive_color;
 }
-.lw-operand button {
+.lw-operand {
     padding: 0;
     background: none;
     border: none;
 }
-.lw-operand.lw-highlight button {
-    background: @warning_color;
+.lw-operand.lw-highlight {
+    background: shade(@warning_color,1.5);
 }
 """
 
@@ -437,7 +519,11 @@ def main():
     options.file[0].close()
 
     model = Model(binaryFile)
-    for sym in options.symbols: model.parse_function(sym)
+    for sym in options.symbols:
+        try:
+            model.parse_function(sym)
+        except Exception as e:
+            print("Cannot parse", sym, e)
     model.functions.sort(key=lambda f: f.address)
 
     style_provider = Gtk.CssProvider()
