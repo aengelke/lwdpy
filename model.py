@@ -10,6 +10,29 @@ from capstone import *
 from capstone import _cs
 from capstone.x86 import *
 
+registerEqualtity = (
+    (X86_REG_RAX, X86_REG_EAX, X86_REG_AX, X86_REG_AL, X86_REG_AH),
+    (X86_REG_RCX, X86_REG_ECX, X86_REG_CX, X86_REG_CL, X86_REG_CH),
+    (X86_REG_RDX, X86_REG_EDX, X86_REG_DX, X86_REG_DL, X86_REG_DH),
+    (X86_REG_RBX, X86_REG_EBX, X86_REG_BX, X86_REG_BL, X86_REG_BH),
+    (X86_REG_RSP, X86_REG_ESP, X86_REG_SP, X86_REG_SPL),
+    (X86_REG_RBP, X86_REG_EBP, X86_REG_BP, X86_REG_BPL),
+    (X86_REG_RSI, X86_REG_ESI, X86_REG_SI, X86_REG_SIL),
+    (X86_REG_RDI, X86_REG_EDI, X86_REG_DI, X86_REG_DIL),
+    (X86_REG_R8, X86_REG_R8D, X86_REG_R8W, X86_REG_R8B),
+    (X86_REG_R9, X86_REG_R9D, X86_REG_R9W, X86_REG_R9B),
+    (X86_REG_R10, X86_REG_R10D, X86_REG_R10W, X86_REG_R10B),
+    (X86_REG_R11, X86_REG_R11D, X86_REG_R11W, X86_REG_R11B),
+    (X86_REG_R12, X86_REG_R12D, X86_REG_R12W, X86_REG_R12B),
+    (X86_REG_R13, X86_REG_R13D, X86_REG_R13W, X86_REG_R13B),
+    (X86_REG_R14, X86_REG_R14D, X86_REG_R14W, X86_REG_R14B),
+    (X86_REG_R15, X86_REG_R15D, X86_REG_R15W, X86_REG_R15B),
+)
+def registerEqual(reg1, reg2):
+    if reg1 == reg2: return True
+    return any([True for eq in registerEqualtity if reg1 in eq and reg2 in eq])
+
+
 class OperandKind(object):
     UNKNOWN = 0
     REG = 1
@@ -26,9 +49,10 @@ class Region(object):
     KIND_ADDR = 3
     KIND_FUNC = 4
     KIND_BB = 5
-    def __init__(self, text, kind=KIND_NONE):
+    def __init__(self, text, kind=KIND_NONE, meta=None):
         self.text = text
         self.kind = kind
+        self.meta = meta
     def __str__(self):
         return self.text
 
@@ -293,55 +317,55 @@ class Model(object):
     def reg_name(self, reg):
         return _cs.cs_reg_name(self.elf.cs.csh, reg).decode()
 
-    def regionize_address(self, address):
+    def regionize_address(self, operand, address):
         if address in self.funcMap:
-            return Region(self.funcMap[address].name, kind=Region.KIND_FUNC)
+            return Region(self.funcMap[address].name, kind=Region.KIND_FUNC, meta=operand)
         for func in self.functions:
             if address in func.addrMap:
                 bb = func.addrMap[address]
                 if bb.address != address: raise Exception("bb address != op imm, jump into bb!")
-                return Region(bb.name, kind=Region.KIND_BB)
-        return Region(hex(address), kind=Region.KIND_ADDR)
+                return Region(bb.name, kind=Region.KIND_BB, meta=operand)
+        return Region(hex(address), kind=Region.KIND_ADDR, meta=operand)
 
-    def regionize_immediate(self, imm, kind):
+    def regionize_immediate(self, operand, imm, kind):
         if kind == OperandKind.ADDR:
-            return self.regionize_address(imm)
+            return self.regionize_address(operand, imm)
         elif kind == OperandKind.IMM_HEX:
-            return Region(hex(imm), kind=Region.KIND_IMM)
+            return Region(hex(imm), kind=Region.KIND_IMM, meta=operand)
         elif kind == OperandKind.IMM_SDEC:
-            return Region(imm, kind=Region.KIND_IMM)
+            return Region(imm, kind=Region.KIND_IMM, meta=operand)
         else: raise Exception("not reached")
 
     def regionize_operand(self, op):
         regions = []
         if op.type == X86_OP_REG:
-            regions.append(Region(self.reg_name(op.reg), kind=Region.KIND_REG))
+            regions.append(Region(self.reg_name(op.reg), kind=Region.KIND_REG, meta=op.reg))
         elif op.type == X86_OP_IMM:
-            regions.append(self.regionize_immediate(op.imm, op.kind[0]))
+            regions.append(self.regionize_immediate(op, op.imm, op.kind[0]))
         elif op.type == X86_OP_MEM:
             sizeName = { 1: "byte", 2: "word", 4: "dword", 8: "qword", 16: "xmmword" }
             if op.size in sizeName: sizeName = sizeName[op.size]
             else: sizeName = "SZ" + op.size
             regions.append(Region(sizeName + " "))
             if op.mem.segment:
-                regions.append(Region(self.reg_name(op.mem.segment), kind=Region.KIND_REG))
+                regions.append(Region(self.reg_name(op.mem.segment), kind=Region.KIND_REG, meta=op.mem.segment))
                 regions.append(Region(":"))
             regions.append(Region("["))
             hasComp = False
             if op.mem.base:
-                regions.append(Region(self.reg_name(op.mem.base), kind=Region.KIND_REG))
+                regions.append(Region(self.reg_name(op.mem.base), kind=Region.KIND_REG, meta=op.mem.base))
                 hasComp = True
             if op.mem.index:
                 if hasComp: regions.append(Region(" + "))
                 if op.mem.scale != 1: regions.append(Region(str(op.mem.scale) + "*"))
-                regions.append(Region(self.reg_name(op.mem.index), kind=Region.KIND_REG))
+                regions.append(Region(self.reg_name(op.mem.index), kind=Region.KIND_REG, meta=op.mem.index))
                 hasComp = True
             if op.mem.disp or not hasComp:
                 if hasComp:
                     regions.append(Region(" + " if op.mem.disp >= 0 else " - "))
-                    regions.append(self.regionize_immediate(abs(op.mem.disp), op.kind[0]))
+                    regions.append(self.regionize_immediate(op, abs(op.mem.disp), op.kind[0]))
                 else:
-                    regions.append(self.regionize_immediate(op.mem.disp, op.kind[0]))
+                    regions.append(self.regionize_immediate(op, op.mem.disp, op.kind[0]))
             regions.append(Region("]"))
         else: regions.append(Region("UNKNOWN"))
         return regions

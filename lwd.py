@@ -11,12 +11,13 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import GLib, Gtk, Gdk
 import cairo
 
-from model import Model, Function
+from model import Region, Model, Function, registerEqual
 
 class GraphViewController(object):
     def __init__(self, model, graphView):
         self.model = model
         self.graphView = graphView
+        self.highlights = []
     def renameBasicBlock(self, basicBlock, newName):
         basicBlock.name = newName
         self.model.update_instructions()
@@ -27,7 +28,18 @@ class GraphViewController(object):
         self.model.update_instructions()
         self.graphView.update_cfg()
         self.graphView.update_table_entry(function)
-
+    def highlightRegion(self, region):
+        for lwop in self.graphView.cfgView.iter_operands(region.kind):
+            highlight = False
+            if region.kind == Region.KIND_REG:
+                highlight = registerEqual(lwop.region.meta, region.meta)
+            if highlight:
+                lwop.get_style_context().add_class("lw-highlight")
+                self.highlights.append(lwop)
+    def highlightClear(self):
+        for widget in self.highlights:
+            widget.get_style_context().remove_class("lw-highlight")
+        self.highlights = []
 
 # This is a bad practice, I know.
 theController = GraphViewController(None, None)
@@ -82,6 +94,38 @@ class LWFunctionPopover(LWBasicBlockPopover):
         self.hide()
         GLib.idle_add(theController.renameFunction, self.function, self.nameEntry.get_text())
 
+
+class LWInstrOperand(Gtk.Bin):
+    def __init__(self, region):
+        super(LWInstrOperand, self).__init__()
+        self.region = region
+        if region.kind == Region.KIND_NONE:
+            child = Gtk.Label(region.text)
+            child.get_style_context().add_class("lw-dim")
+        else:
+            child = Gtk.Button(region.text)
+            def highlight(self, widget):
+                GLib.idle_add(theController.highlightRegion, region)
+            def highlightClear(self, widget):
+                GLib.idle_add(theController.highlightClear)
+            child.connect("focus-in-event", highlight)
+            child.connect("focus-out-event", highlightClear)
+        self.add(child)
+        self.get_style_context().add_class("lw-operand")
+        self.get_style_context().add_class("lw-monospace")
+
+class LWInstrOperands(Gtk.Box):
+    def __init__(self, instr):
+        super(LWInstrOperands, self).__init__(Gtk.Orientation.HORIZONTAL, 0)
+        self.instr = instr
+        self.operands = []
+        for region in instr.op_str:
+            op = LWInstrOperand(region)
+            self.operands.append(op)
+            self.pack_start(op, False, False, 0)
+
+
+
 class LWBasicBlock(Gtk.Box):
     def __init__(self, function, basicBlock):
         super(LWBasicBlock, self).__init__(Gtk.Orientation.VERTICAL, 0)
@@ -98,27 +142,63 @@ class LWBasicBlock(Gtk.Box):
             hdrButton.set_popover(LWBasicBlockPopover(basicBlock))
         self.bbHdr.pack_start(hdrButton, True, True, 0)
         self.bbHdr.get_style_context().add_class("header")
-        self.content = Gtk.TextView()
-        self.content.set_editable(False)
-        self.content.set_can_focus(False)
-        self.content.set_monospace(True)
-        self.buffer = self.content.get_buffer()
+        self.content = Gtk.ListBox()
+        self.instructions = []
+
         self.set_homogeneous(False)
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.pack_start(self.bbHdr, False, False, 0)
-        self.pack_start(self.content, False, True, 0)
+        self.pack_end(self.content, False, True, 0)
 
-        self.update()
+        self.rebuild()
+
+    def rebuild(self):
+        self.content.destroy()
+        self.content = Gtk.ListBox()
+        self.content.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.instructions = []
+        sg1 = Gtk.SizeGroup(Gtk.SizeGroupMode.HORIZONTAL)
+        sg2 = Gtk.SizeGroup(Gtk.SizeGroupMode.HORIZONTAL)
+        sg3 = Gtk.SizeGroup(Gtk.SizeGroupMode.HORIZONTAL)
+        for instr in self.model.instructions:
+            line = Gtk.Box(Gtk.Orientation.HORIZONTAL, 20)
+            mnemonicLabel = Gtk.Label(instr.mnemonic)
+            mnemonicLabel.set_property("xalign", 0.0)
+            mnemonicLabel.get_style_context().add_class("lw-monospace")
+            commentLabel = Gtk.Label()
+            commentLabel.set_property("xalign", 0.0)
+            commentLabel.get_style_context().add_class("lw-dim")
+            commentLabel.get_style_context().add_class("lw-monospace")
+            line.pack_start(mnemonicLabel, False, False, 0)
+            line.pack_end(commentLabel, False, False, 0)
+            sg1.add_widget(mnemonicLabel)
+            sg3.add_widget(commentLabel)
+            self.content.add(line)
+            self.instructions.append([line, None, commentLabel])
+        self.update() # Fill actual data
+
+        self.content.show_all()
+        self.pack_end(self.content, False, True, 0)
 
     def update(self):
         self.hdrLabel.set_text(self.model.name)
-        mnemonics = [instr.mnemonic for instr in self.model.instructions]
-        mnemonicLen = max(5, len(max(mnemonics, key=len)))
+        for instr, view in zip(self.model.instructions, self.instructions):
+            if view[1]: view[1].destroy()
+            view[1] = LWInstrOperands(instr)
+            view[1].show_all()
+            view[0].pack_start(view[1], False, False, 0)
+            commentStr = instr.userComment
+            if commentStr and instr.autoComment: commentStr += " | "
+            commentStr += instr.autoComment
+            # if commentStr:
+            commentStr = "; " + commentStr
+            view[2].set_text(commentStr)
 
-        op_strs = ["".join(map(str, instr.op_str)) for instr in self.model.instructions]
-        displayText = "\n".join([a + ((mnemonicLen - len(a) + 1) * " " + b if b else "") for a, b in zip(mnemonics, op_strs)])
-
-        self.buffer.set_text(displayText)
+    def iter_operands(self, kind):
+        for instrView in self.instructions:
+            for op in instrView[1].operands:
+                if op.region.kind == kind:
+                    yield op
 
 LWBasicBlock.set_css_name("basicblock")
 
@@ -155,6 +235,9 @@ class LWControlFlowGraph(Gtk.Fixed):
 
     def update(self):
         for bbView in self.widgets: bbView.update()
+
+    def iter_operands(self, kind):
+        for bbView in self.widgets: yield from bbView.iter_operands(kind)
 
     def _on_size_allocate(self, bbView, allocation, oldSize):
         if [allocation.width, allocation.height] != oldSize:
@@ -326,8 +409,22 @@ basicblock .header button {
     border: none;
     border-radius: 0;
 }
-basicblock textview {
-    padding: 10px;
+.lw-monospace {
+    font-family: Monospace;
+}
+.lw-dim {
+    color: @insensitive_fg_color;
+}
+.lw-dim:backdrop {
+    color: @unfocused_insensitive_color;
+}
+.lw-operand button {
+    padding: 0;
+    background: none;
+    border: none;
+}
+.lw-operand.lw-highlight button {
+    background: @warning_color;
 }
 """
 
