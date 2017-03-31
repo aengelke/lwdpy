@@ -2,6 +2,8 @@
 
 import argparse
 import math
+import pickle
+import os.path
 import sys
 
 from capstone.x86 import *
@@ -457,9 +459,12 @@ class LWGraphView(Gtk.Paned):
 
     def add_function(self, function):
         index = sorted(self.model.funcMap.keys()).index(function.address)
-        treePath = Gtk.TreePath.new_from_indices([index])
-        treeIter = self.store.get_iter(treePath)
-        self.store.insert_before(treeIter, [function.name, hex(function.address), function.address])
+        if index >= len(self.model.functions) - 1:
+            self.store.append([function.name, hex(function.address), function.address])
+        else:
+            treePath = Gtk.TreePath.new_from_indices([index])
+            treeIter = self.store.get_iter(treePath)
+            self.store.insert_before(treeIter, [function.name, hex(function.address), function.address])
 
     def update_cfg(self):
         self.cfgView.update()
@@ -540,19 +545,28 @@ basicblock .header button {
 
 def main():
     parser = argparse.ArgumentParser(description="lwd")
-    parser.add_argument("file", nargs=1, type=argparse.FileType('rb', 0))
+    parser.add_argument("file", nargs=1, type=str)
     parser.add_argument("symbols", nargs='+')
     options = parser.parse_args()
-    binaryFile = options.file[0].read()
-    options.file[0].close()
 
-    model = Model(binaryFile)
-    for sym in options.symbols:
-        try:
-            model.parse_function(sym)
-        except Exception as e:
-            print("Cannot parse", sym, e)
-    model.functions.sort(key=lambda f: f.address)
+    fileName = options.file[0]
+    pickleFile = fileName + ".pickle"
+
+    model = None
+    if os.path.isfile(pickleFile):
+        with open(pickleFile, "rb") as f:
+            model = pickle.load(f)
+
+    if not model:
+        with open(fileName, "rb") as f:
+            binaryFile = f.read()
+        model = Model(binaryFile)
+        for sym in options.symbols:
+            try:
+                model.parse_function(sym)
+            except Exception as e:
+                print("Cannot parse", sym, e)
+        model.functions.sort(key=lambda f: f.address)
 
     style_provider = Gtk.CssProvider()
     style_provider.load_from_data(css.encode())
@@ -568,7 +582,9 @@ def main():
 
     Gtk.main()
 
-    # print(options.file[0])
+    with open(pickleFile, "wb") as f:
+        pickle.dump(model, f)
+
     return 0
 
 if __name__ == "__main__":

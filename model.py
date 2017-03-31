@@ -59,8 +59,8 @@ class Region(namedtuple("Region", "text,kind,meta")):
         return self.kind == Region.KIND_NONE
 
 
-MemOperand = namedtuple("Operand", ["base", "index", "scale", "disp", "segment"])
-Operand = namedtuple("Operand", ["kind", "type", "size", "reg", "imm", "mem"])
+MemOperand_ = MemOperand = namedtuple("MemOperand_", ["base", "index", "scale", "disp", "segment"])
+Operand_ = Operand = namedtuple("Operand_", ["kind", "type", "size", "reg", "imm", "mem"])
 
 class Instruction(object):
     def __init__(self, cs):
@@ -257,6 +257,13 @@ class Model(object):
         self.parse_plt(".plt", ".rela.plt", 0x10, 0x10)
         self.parse_plt(".plt.got", ".rela.dyn", 0, 0x8)
         self.update_instructions()
+
+    def __getstate__(self):
+        return self.binaryFile, self.functions, self.funcMap
+
+    def __setstate__(self, state):
+        self.binaryFile, self.functions, self.funcMap = state
+        self.elf = ELFReader(self.binaryFile)
 
     def parse_plt(self, pltName, relaName, skip, offset):
         plt = self.elf.get_section(pltName)
