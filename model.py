@@ -68,6 +68,7 @@ class Instruction(object):
         self.id = cs.id
         self.address = cs.address
         self.size = cs.size
+        self.isBranch = X86_GRP_JUMP in cs.groups or X86_GRP_CALL in cs.groups
         self.operands = []
         for op in cs.operands:
             if op.type == X86_OP_MEM:
@@ -82,7 +83,7 @@ class Instruction(object):
                 self.operands.append(Operand([OperandKind.REG], op.type, op.size, op.reg, None, None))
             elif op.type == X86_OP_IMM:
                 kind = OperandKind.IMM_HEX
-                if X86_GRP_JUMP in cs.groups or X86_GRP_CALL in cs.groups: kind = OperandKind.ADDR
+                if self.isBranch: kind = OperandKind.ADDR
                 self.operands.append(Operand([kind], op.type, op.size, None, op.imm, None))
         self.mnemonic = cs.mnemonic
         self.op_str = []
@@ -116,10 +117,7 @@ class ELFReader(object):
     def get_symbol(self, symbolName):
         symtab = self.elf.get_section_by_name(".symtab")
         if not symtab or not isinstance(symtab, SymbolTableSection):
-            print("No symtab found.")
             return
-
-        print("Found symtab with %d symbols" % symtab.num_symbols())
         for i in range(symtab.num_symbols()):
             symbol = symtab.get_symbol(i)
             if symbol.name != symbolName: continue
@@ -290,12 +288,15 @@ class Model(object):
                     print("Could not parse PLT entry @", hex(plt["sh_addr"] + i))
 
     def parse_function(self, tgt):
-        address = self.elf.get_symbol(tgt)
-        if not address:
-            address = int(tgt, 16)
-        if not address:
-            print("Could not find address for", tgt)
-            return
+        if isinstance(tgt, str):
+            address = self.elf.get_symbol(tgt)
+            if not address:
+                address = int(tgt, 16)
+            if not address:
+                print("Could not find address for", tgt)
+                return
+        else: address = tgt
+
         for fn in self.functions:
             if fn.address == address: return fn
 
@@ -321,32 +322,35 @@ class Model(object):
     def reg_name(self, reg):
         return _cs.cs_reg_name(self.elf.cs.csh, reg).decode()
 
-    def regionize_address(self, operand, address):
+    def regionize_address(self, operand, address, regionKind):
         if address in self.funcMap:
-            return Region(self.funcMap[address].name, kind=Region.KIND_DATA, meta=operand)
+            return Region(self.funcMap[address].name, regionKind, operand)
         for func in self.functions:
             if address in func.addrMap:
                 bb = func.addrMap[address]
-                if bb.address != address: raise Exception("bb address != op imm, jump into bb!")
-                return Region(bb.name, kind=Region.KIND_DATA, meta=operand)
-        return Region(hex(address), kind=Region.KIND_DATA, meta=operand)
+                if bb.address == address:
+                    return Region(bb.name, regionKind, operand)
+        return Region(hex(address), regionKind, operand)
 
-    def regionize_immediate(self, operand, imm):
+    def regionize_immediate(self, operand, imm, regionKind):
         if OperandKind.isAddress(operand.kind[0]):
-            return self.regionize_address(operand, imm)
+            return self.regionize_address(operand, imm, regionKind)
         elif operand.kind[0] == OperandKind.IMM_HEX:
-            return Region(hex(imm), kind=Region.KIND_DATA, meta=operand)
+            return Region(hex(imm), regionKind, meta=operand)
         elif operand.kind[0] == OperandKind.IMM_SDEC:
-            return Region(str(imm), kind=Region.KIND_DATA, meta=operand)
+            return Region(str(imm), regionKind, meta=operand)
         else: raise Exception("not reached")
 
-    def regionize_operand(self, op):
+    def regionize_operand(self, op, isBranch=False):
         regions = []
         immediate = None
         if op.type == X86_OP_REG:
-            regions.append(Region(self.reg_name(op.reg), kind=Region.KIND_REG, meta=op.reg))
+            regionKind = Region.KIND_CODE_INDIRECT if isBranch else Region.KIND_REG
+            meta = op if isBranch else op.reg
+            regions.append(Region(self.reg_name(op.reg), regionKind, meta))
         elif op.type == X86_OP_IMM:
-            regions.append(self.regionize_immediate(op, op.imm))
+            regionKind = Region.KIND_CODE_ADDR if isBranch else Region.KIND_DATA
+            regions.append(self.regionize_immediate(op, op.imm, regionKind))
             immediate = op.imm
         elif op.type == X86_OP_MEM:
             sizeName = { 1: "byte", 2: "word", 4: "dword", 8: "qword", 16: "xmmword" }
@@ -369,10 +373,10 @@ class Model(object):
             if op.mem.disp or not hasComp:
                 if hasComp:
                     regions.append(Region(" + " if op.mem.disp >= 0 else " - "))
-                    regions.append(self.regionize_immediate(op, abs(op.mem.disp)))
+                    regions.append(self.regionize_immediate(op, abs(op.mem.disp), Region.KIND_DATA))
                     if op.mem.disp > 0: immediate = op.mem.disp
                 else:
-                    regions.append(self.regionize_immediate(op, op.mem.disp))
+                    regions.append(self.regionize_immediate(op, op.mem.disp, Region.KIND_DATA))
                     immediate = op.mem.disp
             regions.append(Region("]"))
         else: regions.append(Region("UNKNOWN"))
@@ -382,7 +386,7 @@ class Model(object):
         regions = []
         for i, op in enumerate(instr.operands):
             if i != 0: regions.append(Region(", "))
-            newRegions, immediate = self.regionize_operand(op)
+            newRegions, immediate = self.regionize_operand(op, instr.isBranch)
             regions += newRegions
             if op.kind[0] == OperandKind.ADDR_CSTR:
                 try:

@@ -4,6 +4,7 @@ import argparse
 import math
 import sys
 
+from capstone.x86 import *
 import graphviz
 
 import gi
@@ -45,6 +46,18 @@ class GraphViewController(object):
         for widget in self.highlights:
             widget.get_style_context().remove_class("lw-highlight")
         self.highlights = []
+
+    def showCode(self, address):
+        if address in self.model.funcMap:
+            self.graphView.show_function(address)
+        for func in self.model.functions:
+            if address in func.addrMap: return
+        function = self.model.parse_function(address)
+        self.graphView.update_cfg()
+        if function:
+            self.graphView.add_function(function)
+            self.graphView.show_function(function.address)
+
 
 # This is a bad practice, I know.
 theController = GraphViewController(None, None)
@@ -116,14 +129,17 @@ class LWOperandPopover(Gtk.PopoverMenu):
             self.cstrBtn.set_property("text", "C String")
             self.cstrBtn.connect("clicked", self._update_kind, "cstr")
             self.menu.add(self.cstrBtn)
-            self.gotoHexBtn = Gtk.ModelButton()
-            self.gotoHexBtn.set_property("text", "Show in Dump")
-            self.menu.add(self.gotoHexBtn)
             self.decimalBtn = Gtk.ModelButton()
             self.decimalBtn.set_property("role", Gtk.ButtonRole.CHECK)
             self.decimalBtn.set_property("text", "Decimal")
             self.decimalBtn.connect("clicked", self._update_kind, "decimal")
             self.menu.add(self.decimalBtn)
+        elif region.kind == Region.KIND_CODE_INDIRECT:
+            self.jmpTableCheckBox = Gtk.ModelButton()
+            self.jmpTableCheckBox.set_property("role", Gtk.ButtonRole.CHECK)
+            self.jmpTableCheckBox.set_property("text", "Jump Table")
+            self.menu.add(self.jmpTableCheckBox)
+
         self.menu.show_all()
         self.update(region)
         self.add(self.menu)
@@ -153,12 +169,10 @@ class LWOperandPopover(Gtk.PopoverMenu):
             self.addrBtn.set_property("active", isAddress)
             if isAddress:
                 self.cstrBtn.show()
-                self.gotoHexBtn.show()
                 self.decimalBtn.hide()
                 self.cstrBtn.set_property("active", operandKind == OperandKind.ADDR_CSTR)
             else:
                 self.cstrBtn.hide()
-                self.gotoHexBtn.hide()
                 self.decimalBtn.show()
                 self.decimalBtn.set_property("active", operandKind == OperandKind.IMM_SDEC)
 
@@ -168,8 +182,11 @@ class LWInstrOperand(Gtk.Button):
         super(LWInstrOperand, self).__init__()
         self.instruction = instr
         self.region = region
-        self.popover = LWOperandPopover(instr, region)
-        self.popover.set_relative_to(self)
+        if region.kind in (Region.KIND_DATA, Region.KIND_CODE_INDIRECT):
+            self.popover = LWOperandPopover(instr, region)
+            self.popover.set_relative_to(self)
+        else:
+            self.popover = None
         self.connect("focus-in-event", self._focus_handler, True)
         self.connect("focus-out-event", self._focus_handler, False)
         self.connect("button-press-event", self._handle_click)
@@ -191,6 +208,9 @@ class LWInstrOperand(Gtk.Button):
     def _handle_click(self, _, event):
         if event.type == Gdk.EventType.BUTTON_PRESS and event.button == Gdk.BUTTON_SECONDARY:
             if self.popover: self.popover.popup()
+        elif event.type == Gdk.EventType._2BUTTON_PRESS:
+            if self.region.kind == Region.KIND_CODE_ADDR:
+                theController.showCode(self.region.meta.imm)
 
 
 class LWBasicBlock(Gtk.Box):
@@ -286,7 +306,7 @@ LWBasicBlock.set_css_name("basicblock")
 
 
 class LWControlFlowGraph(Gtk.Fixed):
-    BORDER_PADDING = 10
+    BORDER_PADDING = 30
     def __init__(self, function):
         super(LWControlFlowGraph, self).__init__()
         self.widgets = []
@@ -410,7 +430,6 @@ class LWGraphView(Gtk.Paned):
         renderer = Gtk.CellRendererText()
         listColName = Gtk.TreeViewColumn("Name", renderer, text=0)
         listColAddr = Gtk.TreeViewColumn("Address", renderer, text=1)
-        listColAddr.set_sort_column_id(2)
         self.listView.append_column(listColName)
         self.listView.append_column(listColAddr)
         self.listView.get_selection().connect("changed", self._update_graph)
@@ -421,7 +440,7 @@ class LWGraphView(Gtk.Paned):
         self.pack2(self.graphBin, True, True)
 
         for func in model.functions:
-            self.add_function(func)
+            self.store.append([func.name, hex(func.address), func.address])
 
     def _update_graph(self, selection):
         model, treeiter = selection.get_selected()
@@ -437,7 +456,10 @@ class LWGraphView(Gtk.Paned):
             self.graphBin.add(self.cfgView)
 
     def add_function(self, function):
-        self.store.append([function.name, hex(function.address), function.address])
+        index = sorted(self.model.funcMap.keys()).index(function.address)
+        treePath = Gtk.TreePath.new_from_indices([index])
+        treeIter = self.store.get_iter(treePath)
+        self.store.insert_before(treeIter, [function.name, hex(function.address), function.address])
 
     def update_cfg(self):
         self.cfgView.update()
@@ -450,6 +472,12 @@ class LWGraphView(Gtk.Paned):
         treePath = Gtk.TreePath.new_from_indices([index])
         treeIter = self.store.get_iter(treePath)
         self.store.set(treeIter, 0, function.name)
+
+    def show_function(self, address):
+        index = sorted(self.model.funcMap.keys()).index(address)
+        treePath = Gtk.TreePath.new_from_indices([index])
+        treeIter = self.store.get_iter(treePath)
+        self.listView.get_selection().select_iter(treeIter)
 
 
 class Window(object):
