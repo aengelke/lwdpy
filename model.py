@@ -95,7 +95,13 @@ class ELFReader(object):
     def __init__(self, binary):
         self.fd = io.BytesIO(binary)
         self.elf = ELFFile(self.fd)
-        self.cs = Cs(CS_ARCH_X86, CS_MODE_64)
+        self.arch = self.elf.get_machine_arch()
+        if self.arch == "x64":
+            self.cs = Cs(CS_ARCH_X86, CS_MODE_64)
+        elif self.arch == "x86":
+            self.cs = Cs(CS_ARCH_X86, CS_MODE_32)
+        else:
+            raise Exception("unknown arch")
         self.cs.detail = True
         self.vaddr = 0
     def vseek(self, addr):
@@ -254,8 +260,12 @@ class Model(object):
         self.elf = ELFReader(binaryFile)
         self.functions = []
         self.funcMap = {}
-        self.parse_plt(".plt", ".rela.plt", 0x10, 0x10)
-        self.parse_plt(".plt.got", ".rela.dyn", 0, 0x8)
+        if self.elf.arch == "x64":
+            self.parse_plt(".plt", ".rela.plt", 0x10, 0x10)
+            self.parse_plt(".plt.got", ".rela.dyn", 0, 0x8)
+        elif self.elf.arch == "x86":
+            self.parse_plt(".plt", ".rel.plt", 0x10, 0x10)
+            self.parse_plt(".plt.got", ".rel.dyn", 0, 0x8)
         self.update_instructions()
 
     def __getstate__(self):
