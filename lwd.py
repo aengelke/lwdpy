@@ -41,6 +41,8 @@ class GraphViewController(object):
             highlight = False
             if region.kind == Region.KIND_REG:
                 highlight = registerEqual(lwop.region.meta, region.meta)
+            if region.kind == Region.KIND_DATA:
+                highlight = region == lwop.region
             if highlight:
                 lwop.get_style_context().add_class("lw-highlight")
                 self.highlights.append(lwop)
@@ -556,6 +558,7 @@ def main():
     if os.path.isfile(pickleFile):
         with open(pickleFile, "rb") as f:
             model = pickle.load(f)
+        model.functions.sort(key=lambda f: f.address)
 
     if not model:
         with open(fileName, "rb") as f:
