@@ -1,0 +1,73 @@
+<interface>
+  <template class="LWBasicBlockView" parent="GtkBox">
+    <property name="homogeneous">FALSE</property>
+    <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+    <child>
+      <object class="GtkMenuButton" id="headerButton">
+        <property name="popover">popover</property>
+        <style>
+          <class name="flat" />
+          <class name="header" />
+        </style>
+        <child>
+          <object class="GtkLabel" id="headerLabel" />
+        </child>
+      </object>
+    </child>
+    <child>
+      <object class="GtkListBox" id="listBox">
+        <style>
+          <class name="instructions" />
+        </style>
+      </object>
+    </child>
+  </template>
+  <object class="GtkPopover" id="popover">
+    <child>
+      <object class="GtkBox">
+        <property name="margin">10</property>
+        <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+        <property name="homogeneous">FALSE</property>
+        <child>
+          <object class="GtkBox">
+            <property name="spacing">6</property>
+            <child>
+              <object class="GtkEntry" id="nameEntry">
+                <property name="activates-default">TRUE</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="nameButton">
+                <property name="can-default">TRUE</property>
+                <property name="receives-default">TRUE</property>
+                <signal name="clicked" handler="on_name_button_clicked" />
+                <style>
+                  <class name="suggested-action" />
+                </style>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label">Change</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="functionSettings">
+            <property name="margin-top">10</property>
+            <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+            <property name="homogeneous">FALSE</property>
+            <child>
+              <object class="GtkModelButton" id="noreturnButton">
+                <property name="text">No Return</property>
+                <property name="role">GTK_BUTTON_ROLE_CHECK</property>
+                <signal name="clicked" handler="on_noreturn_button_clicked" />
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>

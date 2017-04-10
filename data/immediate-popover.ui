@@ -1,0 +1,61 @@
+<interface>
+  <template class="LWImmediatePopover" parent="GtkPopover">
+    <child>
+      <object class="GtkBox">
+        <property name="margin">10</property>
+        <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+        <property name="homogeneous">FALSE</property>
+        <child>
+          <object class="GtkModelButton" id="addressButton">
+            <property name="text">Address</property>
+            <property name="role">GTK_BUTTON_ROLE_CHECK</property>
+            <signal name="clicked" handler="on_check_button_clicked" />
+          </object>
+        </child>
+        <child>
+          <object class="GtkSeparator" />
+        </child>
+        <child>
+          <object class="GtkBox" id="addressSettings">
+            <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+            <property name="homogeneous">FALSE</property>
+            <child>
+              <object class="GtkModelButton" id="cstrButton">
+                <property name="text">C String</property>
+                <property name="role">GTK_BUTTON_ROLE_CHECK</property>
+                <signal name="clicked" handler="on_check_button_clicked" />
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="dataSettings">
+            <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+            <property name="homogeneous">FALSE</property>
+            <child>
+              <object class="GtkModelButton" id="dataHexButton">
+                <property name="text">Hexadecimal</property>
+                <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                <signal name="clicked" handler="on_radio_button_clicked" />
+              </object>
+            </child>
+            <child>
+              <object class="GtkModelButton" id="dataDecimalButton">
+                <property name="text">Decimal (signed)</property>
+                <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                <signal name="clicked" handler="on_radio_button_clicked" />
+              </object>
+            </child>
+            <child>
+              <object class="GtkModelButton" id="dataCharButton">
+                <property name="text">Character</property>
+                <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                <signal name="clicked" handler="on_radio_button_clicked" />
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </template>
+</interface>

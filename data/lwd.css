@@ -1,0 +1,27 @@
+
+basicblock {
+    background: @theme_base_color;
+    border: 1px solid @borders;
+}
+basicblock button.header {
+    border: none;
+    border-radius: 0;
+    border-bottom: 1px solid @borders;
+}
+basicblock .instructions label {
+    font-family: Monospace;
+}
+.lw-dim {
+    color: @insensitive_fg_color;
+}
+.lw-dim:backdrop {
+    color: @unfocused_insensitive_color;
+}
+region {
+    padding: 0;
+    background: none;
+    border: none;
+}
+region.lw-highlight {
+    background: shade(@warning_color,1.5);
+}

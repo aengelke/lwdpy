@@ -1,0 +1,66 @@
+<interface>
+  <object class="GtkStackSwitcher" id="stackSwitcher">
+    <property name="stack">stack</property>
+  </object>
+  <object class="GtkWindow" id="window">
+    <signal name="destroy" handler="windowDestroy" />
+    <child type="titlebar">
+      <object class="GtkHeaderBar">
+        <property name="show-close-button">TRUE</property>
+        <property name="custom-title">stackSwitcher</property>
+      </object>
+    </child>
+    <child>
+      <object class="GtkStack" id="stack">
+        <child>
+          <object class="GtkPaned" id="paned">
+            <child>
+              <object class="GtkScrolledWindow">
+                <property name="hscrollbar-policy">GTK_POLICY_NEVER</property>
+                <child>
+                  <object class="GtkTreeView" id="treeView">
+                    <child internal-child="selection">
+                      <object class="GtkTreeSelection" id="treeViewSelection">
+                        <signal name="changed" handler="treeViewSelectionChanged" />
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkTreeViewColumn" id="column1">
+                        <property name="title">Name</property>
+                        <property name="expand">TRUE</property>
+                        <property name="min-width">150</property>
+                        <property name="sizing">GTK_TREE_VIEW_COLUMN_AUTOSIZE</property>
+                        <child>
+                          <object class="GtkCellRendererText" id="renderer1">
+                            <property name="ellipsize">PANGO_ELLIPSIZE_END</property>
+                            <property name="ellipsize-set">TRUE</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkTreeViewColumn" id="column2">
+                        <property name="title">Address</property>
+                        <child>
+                          <object class="GtkCellRendererText" id="renderer2" />
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkScrolledWindow" id="graphBin">
+              </object>
+            </child>
+          </object>
+          <packing>
+            <property name="name">graphView</property>
+            <property name="title">CFG</property>
+          </packing>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
