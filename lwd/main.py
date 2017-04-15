@@ -68,7 +68,6 @@ def main():
     # if os.path.isfile(pickleFile):
     #     with open(pickleFile, "rb") as f:
     #         model = pickle.load(f)
-    #     model.functions.sort(key=lambda f: f.address)
 
     if not model:
         with open(fileName, "rb") as f:
@@ -99,8 +98,8 @@ def main():
 
     Gtk.main()
 
-    # with open(pickleFile, "wb") as f:
-    #     pickle.dump(model, f)
+    with open(pickleFile, "wb") as f:
+        pickle.dump(model, f)
 
     return 0
 

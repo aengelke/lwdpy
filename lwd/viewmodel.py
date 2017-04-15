@@ -4,6 +4,8 @@ from collections import namedtuple
 import graphviz
 from gi.repository import GLib, GObject, Gtk
 
+from model import OperandKind, OperandType
+
 class FunctionTableViewModel(GObject.GObject):
     __gsignals__ = {
         "function-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
@@ -94,7 +96,7 @@ class CFGViewModel(GObject.GObject):
         self.basicBlockAddresses = [bb.address for bb in self.function.basicBlocks]
         self.update_texts("cfg-changed")
 
-    def on_name_changed(self, model):
+    def on_name_changed(self, *args):
         self.update_texts()
 
     def on_cfg_changed(self, model):
@@ -164,6 +166,20 @@ class CFGViewModel(GObject.GObject):
 
     def rename_basic_block(self, index, newName):
         self.model.rename(self.function.basicBlocks[index].address, newName)
+
+    def set_operand_name(self, indices, operand, newName):
+        value = None
+        if operand.type == OperandType.MEM:
+            value = operand.mem.disp
+        elif operand.type == OperandType.IMM:
+            value = operand.imm
+        else:
+            return
+
+        if operand.kind == OperandKind.STACKFRAME:
+            self.function.data.set_stackframe_name(value, newName)
+        elif operand.kind.isaddress:
+            self.model.rename(value, newName)
 
     def set_function_property(self, name, value):
         if name == "noreturn":

@@ -6,52 +6,106 @@
         <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
         <property name="homogeneous">FALSE</property>
         <child>
-          <object class="GtkModelButton" id="addressButton">
-            <property name="text">Address</property>
-            <property name="role">GTK_BUTTON_ROLE_CHECK</property>
-            <signal name="clicked" handler="on_check_button_clicked" />
+          <object class="GtkStackSwitcher" id="stackSwitcher">
+            <property name="stack">detailSettings</property>
           </object>
         </child>
         <child>
           <object class="GtkSeparator" />
         </child>
         <child>
-          <object class="GtkBox" id="addressSettings">
-            <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
-            <property name="homogeneous">FALSE</property>
+          <object class="GtkStack" id="detailSettings">
+            <property name="transition-type">GTK_STACK_TRANSITION_TYPE_SLIDE_LEFT_RIGHT</property>
+            <signal name="notify::visible-child-name" handler="on_stack_switch" />
             <child>
-              <object class="GtkModelButton" id="cstrButton">
-                <property name="text">C String</property>
-                <property name="role">GTK_BUTTON_ROLE_CHECK</property>
-                <signal name="clicked" handler="on_check_button_clicked" />
+              <object class="GtkBox">
+                <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+                <property name="homogeneous">FALSE</property>
+                <child>
+                  <object class="GtkModelButton" id="dataHexButton">
+                    <property name="text">Hexadecimal</property>
+                    <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                    <signal name="clicked" handler="on_radio_button_clicked" />
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkModelButton" id="dataDecimalButton">
+                    <property name="text">Decimal (signed)</property>
+                    <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                    <signal name="clicked" handler="on_radio_button_clicked" />
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkModelButton" id="dataCharButton">
+                    <property name="text">Character</property>
+                    <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                    <signal name="clicked" handler="on_radio_button_clicked" />
+                  </object>
+                </child>
               </object>
+              <packing>
+                <property name="name">immediate</property>
+                <property name="title">Data</property>
+              </packing>
             </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox" id="dataSettings">
-            <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
-            <property name="homogeneous">FALSE</property>
             <child>
-              <object class="GtkModelButton" id="dataHexButton">
-                <property name="text">Hexadecimal</property>
-                <property name="role">GTK_BUTTON_ROLE_RADIO</property>
-                <signal name="clicked" handler="on_radio_button_clicked" />
+              <object class="GtkBox">
+                <property name="orientation">GTK_ORIENTATION_VERTICAL</property>
+                <property name="homogeneous">FALSE</property>
+                <child>
+                  <object class="GtkModelButton" id="globalButton">
+                    <property name="text">Global Object</property>
+                    <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                    <signal name="clicked" handler="on_radio_button_clicked" />
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkModelButton" id="cstrButton">
+                    <property name="text">C String</property>
+                    <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                    <signal name="clicked" handler="on_radio_button_clicked" />
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkModelButton" id="stackframeButton">
+                    <property name="text">Stackframe Offset</property>
+                    <property name="role">GTK_BUTTON_ROLE_RADIO</property>
+                    <signal name="clicked" handler="on_radio_button_clicked" />
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkSeparator" />
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkEntry" id="nameEntry">
+                        <property name="activates-default">TRUE</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="nameButton">
+                        <property name="can-default">TRUE</property>
+                        <property name="receives-default">TRUE</property>
+                        <signal name="clicked" handler="on_name_button_clicked" />
+                        <style>
+                          <class name="suggested-action" />
+                        </style>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label">Change</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
               </object>
-            </child>
-            <child>
-              <object class="GtkModelButton" id="dataDecimalButton">
-                <property name="text">Decimal (signed)</property>
-                <property name="role">GTK_BUTTON_ROLE_RADIO</property>
-                <signal name="clicked" handler="on_radio_button_clicked" />
-              </object>
-            </child>
-            <child>
-              <object class="GtkModelButton" id="dataCharButton">
-                <property name="text">Character</property>
-                <property name="role">GTK_BUTTON_ROLE_RADIO</property>
-                <signal name="clicked" handler="on_radio_button_clicked" />
-              </object>
+              <packing>
+                <property name="name">address</property>
+                <property name="title">Address</property>
+              </packing>
             </child>
           </object>
         </child>

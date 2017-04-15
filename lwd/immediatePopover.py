@@ -4,17 +4,25 @@ from gi.repository import Gtk
 from model import OperandKind, RegionKind
 
 
+KIND_GROUPS = {
+    "address": [OperandKind.ADDR, OperandKind.ADDR_CSTR, OperandKind.STACKFRAME],
+    "immediate": [OperandKind.IMM_HEX, OperandKind.IMM_SDEC, OperandKind.IMM_CHAR],
+}
+
 class ImmediatePopover(Gtk.Popover):
     __gtype_name__ = "LWImmediatePopover"
     __gtemplate_children__ = [
-        "addressButton",
-        "addressSettings",
-        "dataSettings",
+        "detailSettings",
+        "globalButton",
         "cstrButton",
+        "stackframeButton",
+        "nameEntry",
         "dataHexButton",
         "dataDecimalButton",
         "dataCharButton",
     ]
+
+    operand = None
 
     def __init__(self, viewModel, indices, region):
         super(ImmediatePopover, self).__init__()
@@ -31,35 +39,40 @@ class ImmediatePopover(Gtk.Popover):
         if region.kind != RegionKind.IMM:
             raise Exception("immediate popover for non-immediate")
         self.operand = region.meta
-        isAddress = self.operand.kind.isaddress
 
-        self.addressSettings.set_property("visible", isAddress)
-        self.dataSettings.set_property("visible", not isAddress)
-        self.addressButton.set_property("active", isAddress)
+        groupName = next(name for name in KIND_GROUPS if self.operand.kind in KIND_GROUPS[name])
+        self.detailSettings.set_property("visible-child-name", groupName)
 
         operandKind = self.operand.kind
+        self.nameEntry.set_text(region.text)
+        self.globalButton.set_property("active", operandKind == OperandKind.ADDR)
         self.cstrButton.set_property("active", operandKind == OperandKind.ADDR_CSTR)
+        self.stackframeButton.set_property("active", operandKind == OperandKind.STACKFRAME)
         self.dataHexButton.set_property("active", operandKind == OperandKind.IMM_HEX)
         self.dataDecimalButton.set_property("active", operandKind == OperandKind.IMM_SDEC)
         self.dataCharButton.set_property("active", operandKind == OperandKind.IMM_CHAR)
+
+    def on_stack_switch(self, stack, paramName):
+        name = stack.get_property("visible-child-name")
+        if self.operand and self.operand.kind not in KIND_GROUPS[name]:
+            self.viewModel.set_operand_kind(self.indices, self.operand, KIND_GROUPS[name][0])
 
     def on_radio_button_clicked(self, button):
         mapping = {
             self.dataHexButton: OperandKind.IMM_HEX,
             self.dataDecimalButton: OperandKind.IMM_SDEC,
             self.dataCharButton: OperandKind.IMM_CHAR,
+            self.globalButton: OperandKind.ADDR,
+            self.cstrButton: OperandKind.ADDR_CSTR,
+            self.stackframeButton: OperandKind.STACKFRAME,
         }
         kind = mapping[button]
         self.viewModel.set_operand_kind(self.indices, self.operand, kind)
 
-    def on_check_button_clicked(self, button):
-        mapping = {
-            self.addressButton: (OperandKind.ADDR, OperandKind.IMM_HEX),
-            self.cstrButton: (OperandKind.ADDR_CSTR, OperandKind.ADDR),
-        }
-        kind = mapping[button][1 if button.get_property("active") else 0]
-        self.viewModel.set_operand_kind(self.indices, self.operand, kind)
-
+    def on_name_button_clicked(self, nameButton):
+        self.popdown()
+        self.viewModel.set_operand_name(self.indices, self.operand, self.nameEntry.get_text())
+        # self.viewModel.rename_basic_block(self.index, self.nameEntry.get_text())
 
     @staticmethod
     def _connect_func(builder, obj, signalName, handlerName, connectObject, flags, cls):

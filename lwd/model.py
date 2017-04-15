@@ -25,6 +25,11 @@ class OperandKind(Enum):
     def isaddress(self):
         return self in (OperandKind.ADDR, OperandKind.ADDR_CSTR)
 
+class OperandType(Enum):
+    REG = 0
+    IMM = 1
+    MEM = 2
+
 class RegionKind(Enum):
     STATIC = 0
     REG = 1
@@ -50,7 +55,29 @@ class Region(namedtuple("Region", "text,kind,meta")):
 LabelKind = Enum("LabelKind", "UNKNOWN OBJECT BASIC_BLOCK FUNCTION")
 
 MemOperand = namedtuple("MemOperand", ["base", "index", "scale", "disp", "segment"])
-Operand = namedtuple("Operand", ["kind", "type", "size", "reg", "imm", "mem"])
+
+class Operand(namedtuple("Operand", ["kind", "type", "size", "reg", "imm", "mem"])):
+    """
+    If type is MEM, the operand kind denotes the kind of the immediate only.
+    """
+
+    @classmethod
+    def register(cls, size, reg):
+        return cls(OperandKind.REG, OperandType.REG, size, reg, None, None)
+    @classmethod
+    def immediate(cls, size, imm):
+        return cls(OperandKind.IMM_HEX, OperandType.IMM, size, None, imm, None)
+    @classmethod
+    def memory(cls, size, base=0, index=0, scale=1, disp=0, segment=0):
+        memOp = MemOperand(base, index, scale, disp, segment)
+        return cls(OperandKind.IMM_HEX, OperandType.MEM, size, None, None, memOp)
+
+    @property
+    def is_stack_relative(self):
+        if self.mem is None:
+            return False
+        return self.mem.base in (X86_REG_RSP, X86_REG_RBP) and not self.mem.index
+
 Label = namedtuple("Label", ["kind", "name", "data"])
 StoredModel = namedtuple("StoredModel", ["binaryFile", "labels", "instructions"])
 
@@ -75,18 +102,16 @@ class FunctionData(GObject.GObject):
     @GObject.Property()
     def stackframe(self):
         return self._stackframe if self._stackframe is not None else {}
-    @stackframe.setter
-    def stackframe(self, value):
-        self._stackframe = value
     def set_stackframe_name(self, offset, name):
-        stackframe = self.stackframe
-        stackframe[offset] = name
-        self.stackframe = stackframe # Trigger update
+        if self._stackframe is None:
+            self._stackframe = {}
+        self._stackframe[abs(offset)] = name
+        self.set_property("stackframe", self._stackframe) # Trigger update
     def stackframe_name(self, offset):
         stackframe = self.stackframe
-        if offset in stackframe:
-            return stackframe[offset]
-        return "var_" + hex(offset)
+        if offset not in stackframe:
+            stackframe[abs(offset)] = "var_" + hex(offset)
+        return stackframe[abs(offset)]
 
     @GObject.Property(type=bool, default=False)
     def plt(self):
@@ -139,23 +164,32 @@ class Instruction(object):
         self.isBranch = X86_GRP_JUMP in cs.groups or X86_GRP_CALL in cs.groups
         self.operands = []
         for op in cs.operands:
+            operand = None
             if op.type == X86_OP_MEM:
                 if op.mem.base == X86_REG_RIP:
-                    memOp = MemOperand(0, 0, 0, cs.address + cs.size + op.mem.disp, op.mem.segment)
-                    kinds = OperandKind.ADDR
-                elif op.mem.base in (X86_REG_RSP, X86_REG_RBP) and not op.mem.index:
-                    memOp = MemOperand(op.mem.base, 0, 0, op.mem.disp, op.mem.segment)
-                    kinds = OperandKind.STACKFRAME
+                    address = cs.address + cs.size + op.mem.disp
+                    operand = Operand.memory(op.size, disp=address, segment=op.mem.segment)
                 else:
-                    memOp = MemOperand(op.mem.base, op.mem.index, op.mem.scale, op.mem.disp, op.mem.segment)
-                    kinds = OperandKind.IMM_HEX if op.mem.base else OperandKind.ADDR
-                self.operands.append(Operand(kinds, op.type, op.size, None, None, memOp))
+                    operand = Operand.memory(op.size, op.mem.base, op.mem.index, op.mem.scale, op.mem.disp, op.mem.segment)
+                # print(op.mem.base, op.mem.index, op.mem.scale, X86_REG_RSP, X86_REG_RBP, op.mem.base in (X86_REG_RSP, X86_REG_RBP) and not op.mem.index)
+                #     memOp = MemOperand(0, 0, 0, cs.address + cs.size + op.mem.disp, op.mem.segment)
+                #     kinds = OperandKind.ADDR
+                # else:
+                #     memOp = MemOperand(op.mem.base, op.mem.index, op.mem.scale, op.mem.disp, op.mem.segment)
+                #     kinds = OperandKind.IMM_HEX if op.mem.base else OperandKind.ADDR
+                # operand = Operand(kinds, op.type, op.size, None, None, memOp)
+                if operand.is_stack_relative:
+                    operand = operand._replace(kind=OperandKind.STACKFRAME)
+                elif not operand.mem.base or op.mem.base == X86_REG_RIP:
+                    operand = operand._replace(kind=OperandKind.ADDR)
             elif op.type == X86_OP_REG:
-                self.operands.append(Operand([OperandKind.REG], op.type, op.size, op.reg, None, None))
+                operand = Operand.register(op.size, op.reg)
             elif op.type == X86_OP_IMM:
-                kind = OperandKind.IMM_HEX
-                if self.isBranch: kind = OperandKind.ADDR
-                self.operands.append(Operand(kind, op.type, op.size, None, op.imm, None))
+                operand = Operand.immediate(op.size, op.imm)
+                if self.isBranch:
+                    operand = operand._replace(kind=OperandKind.ADDR)
+
+            self.operands.append(operand)
         self.mnemonic = cs.mnemonic
         self.csStr = cs.op_str
         self.userComment = ""
@@ -166,7 +200,7 @@ class Instruction(object):
         targets = {}
         if self.id in CF_INSTR_COND or self.id == X86_INS_JMP:
             operand = self.operands[0]
-            if operand.type == X86_OP_IMM:
+            if operand.type == OperandType.IMM:
                 targets["jump"] = operand.imm
             else:
                 print("unhandled jump operand " + self.csStr)
@@ -244,7 +278,7 @@ class Model(GObject.GObject):
             addr = plt["sh_addr"]
             for i in range(skip, plt["sh_size"], offset): # ignore first 10 bytes
                 instr = self.get_instruction(plt["sh_addr"] + i)
-                if instr.id == X86_INS_JMP and instr.operands[0].type == X86_OP_MEM and \
+                if instr.id == X86_INS_JMP and instr.operands[0].type == OperandType.MEM and \
                     not instr.operands[0].mem.base and not instr.operands[0].mem.index:
                     gotEntryAddr = instr.operands[0].mem.disp
 
@@ -267,7 +301,7 @@ class Model(GObject.GObject):
         label = self.get_label(address, name, LabelKind.UNKNOWN)
         if label.name != name:
             self.smodel.labels[address] = label._replace(name=name)
-            self.emit("name-changed", address)
+        self.emit("name-changed", address)
 
     def get_name(self, address):
         if address in self.smodel.labels:
@@ -277,7 +311,7 @@ class Model(GObject.GObject):
     def set_operand_kind(self, instrAddress, operandIndex, kind):
         instr = self.get_instruction(instrAddress)
         operand = instr.operands[operandIndex]
-        instr.operands[operandIndex] = Operand(kind, operand.type, operand.size, operand.reg, operand.imm, operand.mem)
+        instr.operands[operandIndex] = operand._replace(kind=kind)
         self.emit("instruction-changed")
 
     def get_function(self, address):
@@ -331,7 +365,7 @@ class Model(GObject.GObject):
                 instructions.append(instr)
                 if instr.id == X86_INS_CALL:
                     operand = instr.operands[0]
-                    if operand.type == X86_OP_IMM:
+                    if operand.type == OperandType.IMM:
                         callee = self.get_label(operand.imm, "fn_" + hex(address)[2:], LabelKind.FUNCTION)
                         if callee.data.noreturn:
                             successors = {}
@@ -411,14 +445,14 @@ class Model(GObject.GObject):
         regions = []
         immediate = None
 
-        if op.type == X86_OP_REG:
+        if op.type == OperandType.REG:
             regions.append(Region.register(self.reg_name(op.reg), op.reg, branch))
 
-        elif op.type == X86_OP_IMM:
+        elif op.type == OperandType.IMM:
             regions.append(self.regionize_immediate(function, op.imm, op, branch))
             immediate = op.imm
 
-        elif op.type == X86_OP_MEM:
+        elif op.type == OperandType.MEM:
             sizeName = { 1: "byte", 2: "word", 4: "dword", 8: "qword", 16: "xmmword" }
             sizeName = sizeName.get(op.size, "?sz%d" % op.size)
             regions.append(Region.static(sizeName + " "))
