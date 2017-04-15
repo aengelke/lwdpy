@@ -94,7 +94,7 @@ class CFGViewModel(GObject.GObject):
         self.basicBlockAddresses = [bb.address for bb in self.function.basicBlocks]
         self.update_texts("cfg-changed")
 
-    def on_name_changed(self, model, address):
+    def on_name_changed(self, model):
         self.update_texts()
 
     def on_cfg_changed(self, model):
@@ -106,7 +106,7 @@ class CFGViewModel(GObject.GObject):
             instructionViews = []
             for instr in basicBlock.instructions:
                 # This computes auto comment as well
-                regions = self.model.regionize_instruction(instr)
+                regions = self.model.regionize_instruction(self.function, instr)
                 comment = instr.userComment
                 if comment and instr.autoComment:
                     comment += " | "
@@ -165,9 +165,11 @@ class CFGViewModel(GObject.GObject):
     def rename_basic_block(self, index, newName):
         self.model.rename(self.function.basicBlocks[index].address, newName)
 
-    def set_basic_block_property(self, index, name, value):
+    def set_function_property(self, name, value):
         if name == "noreturn":
-            self.model.set_attribute(self.basicBlockAddresses[index], name, value)
+            self.function.data.noreturn = value
+        # if name == "noreturn":
+        #     self.model.set_attribute(self.basicBlockAddresses[index], name, value)
 
     def set_operand_kind(self, indices, operand, kind):
         bbIndex, instrIndex, regionIndex = indices

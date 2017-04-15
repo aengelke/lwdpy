@@ -11,7 +11,7 @@ from gi.repository import GObject
 
 from elfreader import ELFReader
 
-class OperandKind(object):
+class OperandKind(Enum):
     UNKNOWN = 0
     REG = 1
     IMM_SDEC = 2
@@ -19,9 +19,11 @@ class OperandKind(object):
     ADDR = 5
     ADDR_CSTR = 6
     IMM_CHAR = 7
-    @staticmethod
-    def isAddress(kind):
-        return kind in (OperandKind.ADDR, OperandKind.ADDR_CSTR)
+    STACKFRAME = 8
+
+    @property
+    def isaddress(self):
+        return self in (OperandKind.ADDR, OperandKind.ADDR_CSTR)
 
 class RegionKind(Enum):
     STATIC = 0
@@ -45,12 +47,50 @@ class Region(namedtuple("Region", "text,kind,meta")):
         kind = RegionKind.CODE_IMM if branch else RegionKind.IMM
         return cls(text, kind, operand)
 
+LabelKind = Enum("LabelKind", "UNKNOWN OBJECT BASIC_BLOCK FUNCTION")
 
-MemOperand_ = MemOperand = namedtuple("MemOperand_", ["base", "index", "scale", "disp", "segment"])
-Operand_ = Operand = namedtuple("Operand_", ["kind", "type", "size", "reg", "imm", "mem"])
-Label_ = Label = namedtuple("Label_", ["name", "data"])
-StoredModel_ = StoredModel = namedtuple("StoredModel_", ["binaryFile", "labels", "instructions"])
+MemOperand = namedtuple("MemOperand", ["base", "index", "scale", "disp", "segment"])
+Operand = namedtuple("Operand", ["kind", "type", "size", "reg", "imm", "mem"])
+Label = namedtuple("Label", ["kind", "name", "data"])
+StoredModel = namedtuple("StoredModel", ["binaryFile", "labels", "instructions"])
 
+class FunctionData(GObject.GObject):
+    _noreturn = False
+    _plt = False
+    _stackframe = None
+
+    def __getstate__(self):
+        # TODO: Iterate over properties
+        return {"noreturn": self.noreturn, "plt": self.plt, "stackframe": self.stackframe}
+    def __setstate__(self, state):
+        super(FunctionData, self).__init__(**state)
+
+    @GObject.Property(type=bool, default=False)
+    def noreturn(self):
+        return self._noreturn
+    @noreturn.setter
+    def noreturn(self, value):
+        self._noreturn = value
+
+    @GObject.Property()
+    def stackframe(self):
+        return self._stackframe if self._stackframe is not None else {}
+    @stackframe.setter
+    def stackframe(self, value):
+        self._stackframe = value
+    def set_stackframe_name(self, offset, name):
+        stackframe = self.stackframe
+        stackframe[offset] = name
+        self.stackframe = stackframe # Trigger update
+    def stackframe_name(self, offset):
+        stackframe = self.stackframe
+        if offset in stackframe:
+            return stackframe[offset]
+        return "var_" + hex(offset)
+
+    @GObject.Property(type=bool, default=False)
+    def plt(self):
+        return self._plt
 
 CF_INSTR_COND = (
     X86_INS_JAE,
@@ -84,6 +124,13 @@ CF_INSTR_UNCOND = (
     X86_INS_UD2,
 )
 
+PLT_NORETURN = (
+    "__stack_chk_fail@plt",
+    "__libc_start_main@plt",
+    "exit@plt",
+    "_exit@plt",
+)
+
 class Instruction(object):
     def __init__(self, cs):
         self.id = cs.id
@@ -96,6 +143,9 @@ class Instruction(object):
                 if op.mem.base == X86_REG_RIP:
                     memOp = MemOperand(0, 0, 0, cs.address + cs.size + op.mem.disp, op.mem.segment)
                     kinds = OperandKind.ADDR
+                elif op.mem.base in (X86_REG_RSP, X86_REG_RBP) and not op.mem.index:
+                    memOp = MemOperand(op.mem.base, 0, 0, op.mem.disp, op.mem.segment)
+                    kinds = OperandKind.STACKFRAME
                 else:
                     memOp = MemOperand(op.mem.base, op.mem.index, op.mem.scale, op.mem.disp, op.mem.segment)
                     kinds = OperandKind.IMM_HEX if op.mem.base else OperandKind.ADDR
@@ -134,7 +184,7 @@ class Model(GObject.GObject):
     __gsignals__ = {
         "name-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
         "cfg-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
-        "instruction-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
+        "instruction-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self, binaryFile, **kwargs):
@@ -154,8 +204,10 @@ class Model(GObject.GObject):
             self.parse_plt(".plt.got", ".rel.dyn", 0, 0x8)
 
         for value, name, kind in self.elf.iter_symbols():
-            if kind in ("function", "object",):
-                self.get_label(value, name, kind)
+            if kind == "function":
+                self.get_label(value, name, LabelKind.FUNCTION, FunctionData())
+            elif kind == "object":
+                self.get_label(value, name, LabelKind.OBJECT)
 
     def _clear_function_cache(self):
         self._functions = {}
@@ -165,15 +217,22 @@ class Model(GObject.GObject):
         return self.smodel
 
     def __setstate__(self, state):
+        super(Model, self).__init__()
         self.smodel = state
         self.elf = ELFReader(self.smodel.binaryFile)
         self._functions = {}
+        for labelAddr in self.smodel.labels:
+            label = self.smodel.labels[labelAddr]
+            if label.kind == LabelKind.FUNCTION:
+                if label.data is None or not isinstance(label.data, FunctionData):
+                    raise Exception("function has wrong data type")
+                label.data.connect("notify", self._on_function_data_update)
 
     def get_functions(self):
         functions = []
         for labelAddr in self.smodel.labels:
             label = self.smodel.labels[labelAddr]
-            if label.data["kind"] == "function":
+            if label.kind == LabelKind.FUNCTION:
                 functions.append((labelAddr, label.name))
         return functions
 
@@ -199,17 +258,15 @@ class Model(GObject.GObject):
                         continue
 
                     symName = symtab.get_symbol(relocation["r_info_sym"]).name + "@plt"
-                    data = {"plt": True}
-                    if symName in ("__stack_chk_fail@plt", "__libc_start_main@plt", "exit@plt", "_exit@plt"):
-                        data["noreturn"] = True
-                    self.get_label(instr.address, symName, "function", data)
+                    data = FunctionData(plt=True, noreturn=symName in PLT_NORETURN)
+                    self.get_label(instr.address, symName, LabelKind.FUNCTION, data)
                 else:
                     print("Could not parse PLT entry @", hex(plt["sh_addr"] + i))
 
     def rename(self, address, name):
-        label = self.get_label(address, name, "unknown")
+        label = self.get_label(address, name, LabelKind.UNKNOWN)
         if label.name != name:
-            self.smodel.labels[address] = Label(name, label.data)
+            self.smodel.labels[address] = label._replace(name=name)
             self.emit("name-changed", address)
 
     def get_name(self, address):
@@ -217,23 +274,11 @@ class Model(GObject.GObject):
             return self.smodel.labels[address].name
         return hex(address)
 
-    def set_attribute(self, address, attribute, value=True):
-        if address not in self.smodel.labels:
-            return
-        data = self.smodel.labels[address].data
-        if not value:
-            data.pop(attribute, None)
-        else:
-            data[attribute] = value
-
-        if attribute == "noreturn":
-            self._clear_function_cache()
-
     def set_operand_kind(self, instrAddress, operandIndex, kind):
         instr = self.get_instruction(instrAddress)
         operand = instr.operands[operandIndex]
         instr.operands[operandIndex] = Operand(kind, operand.type, operand.size, operand.reg, operand.imm, operand.mem)
-        self.emit("instruction-changed", instrAddress)
+        self.emit("instruction-changed")
 
     def get_function(self, address):
         if isinstance(address, str):
@@ -248,9 +293,9 @@ class Model(GObject.GObject):
         if address in self._functions:
             return self._functions[address]
 
-        label = self.get_label(address, "fn_" + hex(address)[2:], "function")
+        label = self.get_label(address, "fn_" + hex(address)[2:], LabelKind.FUNCTION)
         name, data = label.name, label.data
-        if data["kind"] != "function":
+        if label.kind != LabelKind.FUNCTION:
             print("Label at", hex(address), "with name", name, label, "is not a function")
             return
 
@@ -287,8 +332,8 @@ class Model(GObject.GObject):
                 if instr.id == X86_INS_CALL:
                     operand = instr.operands[0]
                     if operand.type == X86_OP_IMM:
-                        callee = self.get_label(operand.imm, "fn_" + hex(address)[2:], "function")
-                        if "noreturn" in callee.data:
+                        callee = self.get_label(operand.imm, "fn_" + hex(address)[2:], LabelKind.FUNCTION)
+                        if callee.data.noreturn:
                             successors = {}
                             break
                 successors = instr.getJumpTargets(True)
@@ -304,7 +349,7 @@ class Model(GObject.GObject):
         basicBlocks = list({bb.address: bb for bb in addrMap.values()}.values())
         basicBlocks.sort(key=lambda bb: bb.address)
         for index, bb in enumerate(basicBlocks):
-            label = self.get_label(bb.address, "bb_" + hex(bb.address)[2:], "basicBlock")
+            label = self.get_label(bb.address, "bb_" + hex(bb.address)[2:], LabelKind.BASIC_BLOCK)
             basicBlocks[index] = BasicBlock(bb.address, bb.instructions, bb.successors, label.data)
 
         function = Function(address, basicBlocks, data)
@@ -322,24 +367,35 @@ class Model(GObject.GObject):
         self.smodel.instructions[address] = instr
         return instr
 
+    def _on_function_data_update(self, functionData, param):
+        if param.name == "noreturn":
+            self._clear_function_cache()
+        elif param.name == "stackframe":
+            self.emit("instruction-changed")
+        else:
+            print("function data", param.name, "changed; ignoring")
+
     def get_label(self, address, name, kind, data=None):
         if address not in self.smodel.labels:
-            if not data:
-                data = {"kind": kind}
-            else:
-                data["kind"] = kind
-            self.smodel.labels[address] = Label(name, data)
-            return self.smodel.labels[address]
+            if kind == LabelKind.FUNCTION:
+                if data is None:
+                    data = FunctionData()
+                if not isinstance(data, FunctionData):
+                    raise Exception("function has wrong data type")
+                data.connect("notify", self._on_function_data_update)
+            label = self.smodel.labels[address] = Label(kind, name, data)
         else:
             label = self.smodel.labels[address]
-            return label
+        if label.kind == LabelKind.FUNCTION and (not label.data or not isinstance(label.data, FunctionData)):
+            raise Exception("function has wrong data type")
+        return label
 
     def reg_name(self, reg):
         return _cs.cs_reg_name(self.elf.cs.csh, reg).decode()
 
-    def regionize_immediate(self, immediate, operand, branch=False):
+    def regionize_immediate(self, function, immediate, operand, branch=False):
         text = "?" + hex(immediate)
-        if OperandKind.isAddress(operand.kind):
+        if operand.kind.isaddress:
             text = self.get_name(immediate)
         elif operand.kind == OperandKind.IMM_HEX:
             text = hex(immediate)
@@ -347,9 +403,11 @@ class Model(GObject.GObject):
             text = str(immediate)
         elif operand.kind == OperandKind.IMM_CHAR:
             text = repr(struct.pack("<Q", immediate)[:operand.size])[1:]
+        elif operand.kind == OperandKind.STACKFRAME:
+            text = function.data.stackframe_name(immediate)
         return Region.immediate(text, operand, branch)
 
-    def regionize_operand(self, op, branch=False):
+    def regionize_operand(self, function, op, branch=False):
         regions = []
         immediate = None
 
@@ -357,7 +415,7 @@ class Model(GObject.GObject):
             regions.append(Region.register(self.reg_name(op.reg), op.reg, branch))
 
         elif op.type == X86_OP_IMM:
-            regions.append(self.regionize_immediate(op.imm, op, branch))
+            regions.append(self.regionize_immediate(function, op.imm, op, branch))
             immediate = op.imm
 
         elif op.type == X86_OP_MEM:
@@ -384,10 +442,10 @@ class Model(GObject.GObject):
             if op.mem.disp or not hasComp:
                 if hasComp:
                     regions.append(Region.static(" + " if op.mem.disp >= 0 else " - "))
-                    regions.append(self.regionize_immediate(abs(op.mem.disp), op))
+                    regions.append(self.regionize_immediate(function, abs(op.mem.disp), op))
                     if op.mem.disp > 0: immediate = op.mem.disp
                 else:
-                    regions.append(self.regionize_immediate(op.mem.disp, op))
+                    regions.append(self.regionize_immediate(function, op.mem.disp, op))
                     immediate = op.mem.disp
             regions.append(Region.static("]"))
 
@@ -395,11 +453,11 @@ class Model(GObject.GObject):
             regions.append(Region.static("?"))
         return regions, immediate
 
-    def regionize_instruction(self, instr):
+    def regionize_instruction(self, function, instr):
         regions = []
         for i, op in enumerate(instr.operands):
             if i != 0: regions.append(Region.static(", "))
-            newRegions, immediate = self.regionize_operand(op, instr.isBranch)
+            newRegions, immediate = self.regionize_operand(function, op, instr.isBranch)
             regions += newRegions
             if op.kind == OperandKind.ADDR_CSTR:
                 try:

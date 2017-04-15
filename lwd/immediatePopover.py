@@ -31,7 +31,7 @@ class ImmediatePopover(Gtk.Popover):
         if region.kind != RegionKind.IMM:
             raise Exception("immediate popover for non-immediate")
         self.operand = region.meta
-        isAddress = OperandKind.isAddress(self.operand.kind)
+        isAddress = self.operand.kind.isaddress
 
         self.addressSettings.set_property("visible", isAddress)
         self.dataSettings.set_property("visible", not isAddress)

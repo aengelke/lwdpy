@@ -1,7 +1,7 @@
 
 from gi.repository import GObject, Gtk, Gdk
 
-from model import OperandKind, RegionKind
+from model import FunctionData, LabelKind, OperandKind, RegionKind
 from immediatePopover import ImmediatePopover
 
 
@@ -75,7 +75,7 @@ class BasicBlockView(Gtk.Box):
 
         self.popover.set_default_widget(self.nameButton)
         self.popover.get_child().show_all()
-        if basicBlock.data["kind"] != "function":
+        if not basicBlock.data or not isinstance(basicBlock.data, FunctionData):
             self.functionSettings.hide()
 
         sizeGroup1 = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
@@ -118,7 +118,9 @@ class BasicBlockView(Gtk.Box):
     def update_texts(self, basicBlock):
         self.headerLabel.set_label(basicBlock.name)
         self.nameEntry.set_text(basicBlock.name)
-        self.noreturnButton.set_property("active", "noreturn" in basicBlock.data)
+
+        if basicBlock.data and isinstance(basicBlock.data, FunctionData):
+            self.noreturnButton.set_property("active", basicBlock.data.noreturn)
 
         for instr, (regionViews, commentLabel) in zip(basicBlock.instructions, self.instructions):
             for region, regionView in zip(instr.regions, regionViews):
@@ -139,7 +141,7 @@ class BasicBlockView(Gtk.Box):
     def on_noreturn_button_clicked(self, noreturnButton):
         self.popover.popdown()
         isNoreturn = not self.noreturnButton.get_property("active")
-        self.viewModel.set_basic_block_property(self.index, "noreturn", isNoreturn)
+        self.viewModel.set_function_property("noreturn", isNoreturn)
 
     @staticmethod
     def _connect_func(builder, obj, signalName, handlerName, connectObject, flags, cls):
