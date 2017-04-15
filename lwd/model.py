@@ -123,9 +123,9 @@ BasicBlock = namedtuple("BasicBlock", ["address", "instructions", "successors", 
 
 class Model(GObject.GObject):
     __gsignals__ = {
-        "name-changed": (GObject.SIGNAL_RUN_FIRST, None, (int,)),
-        "cfg-changed": (GObject.SIGNAL_RUN_FIRST, None, ()),
-        "instruction-changed": (GObject.SIGNAL_RUN_FIRST, None, (int,)),
+        "name-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
+        "cfg-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "instruction-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
     }
 
     def __init__(self, binaryFile, **kwargs):

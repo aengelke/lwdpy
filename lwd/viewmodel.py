@@ -6,7 +6,7 @@ from gi.repository import GLib, GObject, Gtk
 
 class FunctionTableViewModel(GObject.GObject):
     __gsignals__ = {
-        "function-changed": (GObject.SIGNAL_RUN_FIRST, None, (int,)),
+        "function-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
     }
 
     def __init__(self, model):
@@ -57,20 +57,20 @@ class CFGViewModel(GObject.GObject):
     __gsignals__ = {
         # Emitted when the whole view has to be rebuilt
         # Arguments: List of basic blocks
-        "cfg-changed": (GObject.SIGNAL_RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
+        "cfg-changed": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
 
         # Emitted when the text of the instructions or the labels changed, but
         # no deeper change is required
         # Arguments: List of basic blocks
-        "text-changed": (GObject.SIGNAL_RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
+        "text-changed": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
 
         # Emitted when the highlighting of regions is updated
         # Arguments: List of lists of lists of bools
-        "highlight-changed": (GObject.SIGNAL_RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
+        "highlight-changed": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT,)),
 
         # Emitted when new basic block positions are available
         # Arguments: Total size, list of coordinates and list of edges
-        "layout-changed": (GObject.SIGNAL_RUN_FIRST, None, (GObject.TYPE_PYOBJECT, GObject.TYPE_PYOBJECT, GObject.TYPE_PYOBJECT)),
+        "layout-changed": (GObject.SignalFlags.RUN_FIRST, None, (GObject.TYPE_PYOBJECT, GObject.TYPE_PYOBJECT, GObject.TYPE_PYOBJECT)),
     }
 
     def __init__(self, model, address):

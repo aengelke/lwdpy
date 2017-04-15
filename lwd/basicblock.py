@@ -78,20 +78,20 @@ class BasicBlockView(Gtk.Box):
         if basicBlock.data["kind"] != "function":
             self.functionSettings.hide()
 
-        sizeGroup1 = Gtk.SizeGroup(Gtk.SizeGroupMode.HORIZONTAL)
-        sizeGroup2 = Gtk.SizeGroup(Gtk.SizeGroupMode.HORIZONTAL)
-        sizeGroup3 = Gtk.SizeGroup(Gtk.SizeGroupMode.HORIZONTAL)
+        sizeGroup1 = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        sizeGroup2 = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+        sizeGroup3 = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
 
         self.instructions = []
         for instrIndex, instr in enumerate(basicBlock.instructions):
-            line = Gtk.Box(Gtk.Orientation.HORIZONTAL, 20)
-            mnemonicLabel = Gtk.Label(instr.mnemonic)
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=20)
+            mnemonicLabel = Gtk.Label(label=instr.mnemonic)
             mnemonicLabel.set_property("xalign", 0)
             regionViewsBox = Gtk.Box()
             regionViews = []
             for regionIndex, region in enumerate(instr.regions):
                 if region.isStatic():
-                    label = Gtk.Label(region.text)
+                    label = Gtk.Label(label=region.text)
                     label.get_style_context().add_class("lw-dim")
                     regionViews.append(None)
                     regionViewsBox.pack_start(label, False, False, 0)
