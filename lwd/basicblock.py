@@ -1,7 +1,7 @@
 
 from gi.repository import GObject, Gtk, Gdk
 
-from model import OperandKind, Region
+from model import OperandKind, RegionKind
 from immediatePopover import ImmediatePopover
 
 
@@ -12,7 +12,7 @@ class RegionView(Gtk.Button):
         self.viewModel = viewModel
         self.region = region
         self.popover = None
-        if region.kind == Region.KIND_DATA:
+        if region.kind == RegionKind.IMM:
             self.popover = ImmediatePopover(viewModel, indices, region)
         if self.popover:
             self.popover.set_relative_to(self)
@@ -90,7 +90,7 @@ class BasicBlockView(Gtk.Box):
             regionViewsBox = Gtk.Box()
             regionViews = []
             for regionIndex, region in enumerate(instr.regions):
-                if region.isStatic():
+                if region.kind == RegionKind.STATIC:
                     label = Gtk.Label(label=region.text)
                     label.get_style_context().add_class("lw-dim")
                     regionViews.append(None)
@@ -122,7 +122,7 @@ class BasicBlockView(Gtk.Box):
 
         for instr, (regionViews, commentLabel) in zip(basicBlock.instructions, self.instructions):
             for region, regionView in zip(instr.regions, regionViews):
-                if not region.isStatic():
+                if regionView:
                     regionView.update(region)
             commentLabel.set_text(instr.comment)
 

@@ -1,7 +1,7 @@
 
 from gi.repository import Gtk
 
-from model import OperandKind, Region
+from model import OperandKind, RegionKind
 
 
 class ImmediatePopover(Gtk.Popover):
@@ -28,22 +28,20 @@ class ImmediatePopover(Gtk.Popover):
         self.operand = region.meta
 
     def update(self, region):
-        if region.kind != Region.KIND_DATA:
+        if region.kind != RegionKind.IMM:
             raise Exception("immediate popover for non-immediate")
         self.operand = region.meta
+        isAddress = OperandKind.isAddress(self.operand.kind)
+
+        self.addressSettings.set_property("visible", isAddress)
+        self.dataSettings.set_property("visible", not isAddress)
+        self.addressButton.set_property("active", isAddress)
+
         operandKind = self.operand.kind
-        if OperandKind.isAddress(operandKind):
-            self.addressSettings.show()
-            self.dataSettings.hide()
-            self.addressButton.set_property("active", True)
-            self.cstrButton.set_property("active", operandKind == OperandKind.ADDR_CSTR)
-        else:
-            self.addressSettings.hide()
-            self.dataSettings.show()
-            self.addressButton.set_property("active", False)
-            self.dataHexButton.set_property("active", operandKind == OperandKind.IMM_HEX)
-            self.dataDecimalButton.set_property("active", operandKind == OperandKind.IMM_SDEC)
-            self.dataCharButton.set_property("active", operandKind == OperandKind.IMM_CHAR)
+        self.cstrButton.set_property("active", operandKind == OperandKind.ADDR_CSTR)
+        self.dataHexButton.set_property("active", operandKind == OperandKind.IMM_HEX)
+        self.dataDecimalButton.set_property("active", operandKind == OperandKind.IMM_SDEC)
+        self.dataCharButton.set_property("active", operandKind == OperandKind.IMM_CHAR)
 
     def on_radio_button_clicked(self, button):
         mapping = {

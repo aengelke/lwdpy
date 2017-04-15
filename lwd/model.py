@@ -1,5 +1,6 @@
 
 from collections import namedtuple
+from enum import Enum
 import io
 import os
 import struct
@@ -9,7 +10,6 @@ from capstone.x86 import *
 from gi.repository import GObject
 
 from elfreader import ELFReader
-
 
 class OperandKind(object):
     UNKNOWN = 0
@@ -23,18 +23,27 @@ class OperandKind(object):
     def isAddress(kind):
         return kind in (OperandKind.ADDR, OperandKind.ADDR_CSTR)
 
+class RegionKind(Enum):
+    STATIC = 0
+    REG = 1
+    IMM = 2
+    CODE_IMM = 3
+    CODE_REG = 4
+
 class Region(namedtuple("Region", "text,kind,meta")):
-    KIND_NONE = 0
-    KIND_REG = 1
-    KIND_DATA = 2
-    KIND_CODE_ADDR = 3
-    KIND_CODE_INDIRECT = 4
-    def __new__(self, text, kind=KIND_NONE, meta=None):
-        return super(Region, self).__new__(self, text, kind, meta)
-    def isImmediate(self):
-        return self.kind == Region.KIND_DATA
-    def isStatic(self):
-        return self.kind == Region.KIND_NONE
+    __slots__ = ()
+
+    @classmethod
+    def static(cls, text):
+        return cls(text, RegionKind.STATIC, None)
+    @classmethod
+    def register(cls, text, register, branch=False):
+        kind = RegionKind.CODE_REG if branch else RegionKind.REG
+        return cls(text, kind, register)
+    @classmethod
+    def immediate(cls, text, operand, branch=False):
+        kind = RegionKind.CODE_IMM if branch else RegionKind.IMM
+        return cls(text, kind, operand)
 
 
 MemOperand_ = MemOperand = namedtuple("MemOperand_", ["base", "index", "scale", "disp", "segment"])
@@ -328,62 +337,68 @@ class Model(GObject.GObject):
     def reg_name(self, reg):
         return _cs.cs_reg_name(self.elf.cs.csh, reg).decode()
 
-    def regionize_immediate(self, operand, imm, regionKind):
+    def regionize_immediate(self, immediate, operand, branch=False):
+        text = "?" + hex(immediate)
         if OperandKind.isAddress(operand.kind):
-            return Region(self.get_name(imm), regionKind, meta=operand)
+            text = self.get_name(immediate)
         elif operand.kind == OperandKind.IMM_HEX:
-            return Region(hex(imm), regionKind, meta=operand)
+            text = hex(immediate)
         elif operand.kind == OperandKind.IMM_SDEC:
-            return Region(str(imm), regionKind, meta=operand)
+            text = str(immediate)
         elif operand.kind == OperandKind.IMM_CHAR:
-            return Region(repr(struct.pack("<Q", imm)[:operand.size])[1:], regionKind, meta=operand)
-        else: raise Exception("not reached")
+            text = repr(struct.pack("<Q", immediate)[:operand.size])[1:]
+        return Region.immediate(text, operand, branch)
 
-    def regionize_operand(self, op, isBranch=False):
+    def regionize_operand(self, op, branch=False):
         regions = []
         immediate = None
+
         if op.type == X86_OP_REG:
-            regionKind = Region.KIND_CODE_INDIRECT if isBranch else Region.KIND_REG
-            meta = op if isBranch else op.reg
-            regions.append(Region(self.reg_name(op.reg), regionKind, meta))
+            regions.append(Region.register(self.reg_name(op.reg), op.reg, branch))
+
         elif op.type == X86_OP_IMM:
-            regionKind = Region.KIND_CODE_ADDR if isBranch else Region.KIND_DATA
-            regions.append(self.regionize_immediate(op, op.imm, regionKind))
+            regions.append(self.regionize_immediate(op.imm, op, branch))
             immediate = op.imm
+
         elif op.type == X86_OP_MEM:
             sizeName = { 1: "byte", 2: "word", 4: "dword", 8: "qword", 16: "xmmword" }
-            if op.size in sizeName: sizeName = sizeName[op.size]
-            else: sizeName = "SZ" + op.size
-            regions.append(Region(sizeName + " "))
+            sizeName = sizeName.get(op.size, "?sz%d" % op.size)
+            regions.append(Region.static(sizeName + " "))
+
             if op.mem.segment:
-                regions.append(Region(self.reg_name(op.mem.segment), kind=Region.KIND_REG, meta=op.mem.segment))
-                regions.append(Region(":"))
-            regions.append(Region("["))
+                regions.append(Region.register(self.reg_name(op.mem.segment), op.mem.segment))
+                regions.append(Region.static(":"))
+
+            regions.append(Region.static("["))
             hasComp = False
             if op.mem.base:
-                regions.append(Region(self.reg_name(op.mem.base), kind=Region.KIND_REG, meta=op.mem.base))
+                regions.append(Region.register(self.reg_name(op.mem.base), op.mem.base))
                 hasComp = True
             if op.mem.index:
-                if hasComp: regions.append(Region(" + "))
-                if op.mem.scale != 1: regions.append(Region(str(op.mem.scale) + "*"))
-                regions.append(Region(self.reg_name(op.mem.index), kind=Region.KIND_REG, meta=op.mem.index))
+                if hasComp:
+                    regions.append(Region.static(" + "))
+                if op.mem.scale != 1:
+                    regions.append(Region.static(str(op.mem.scale) + "*"))
+                regions.append(Region.register(self.reg_name(op.mem.index), op.mem.index))
                 hasComp = True
             if op.mem.disp or not hasComp:
                 if hasComp:
-                    regions.append(Region(" + " if op.mem.disp >= 0 else " - "))
-                    regions.append(self.regionize_immediate(op, abs(op.mem.disp), Region.KIND_DATA))
+                    regions.append(Region.static(" + " if op.mem.disp >= 0 else " - "))
+                    regions.append(self.regionize_immediate(abs(op.mem.disp), op))
                     if op.mem.disp > 0: immediate = op.mem.disp
                 else:
-                    regions.append(self.regionize_immediate(op, op.mem.disp, Region.KIND_DATA))
+                    regions.append(self.regionize_immediate(op.mem.disp, op))
                     immediate = op.mem.disp
-            regions.append(Region("]"))
-        else: regions.append(Region("UNKNOWN"))
+            regions.append(Region.static("]"))
+
+        else:
+            regions.append(Region.static("?"))
         return regions, immediate
 
     def regionize_instruction(self, instr):
         regions = []
         for i, op in enumerate(instr.operands):
-            if i != 0: regions.append(Region(", "))
+            if i != 0: regions.append(Region.static(", "))
             newRegions, immediate = self.regionize_operand(op, instr.isBranch)
             regions += newRegions
             if op.kind == OperandKind.ADDR_CSTR:
