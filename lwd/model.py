@@ -9,7 +9,8 @@ from capstone import _cs
 from capstone.x86 import *
 from gi.repository import GObject
 
-from elfreader import ELFReader
+from lwd import profile
+from lwd.elfreader import ELFReader
 
 class OperandKind(Enum):
     UNKNOWN = 0
@@ -218,7 +219,7 @@ class Model(GObject.GObject):
     __gsignals__ = {
         "name-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
         "cfg-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
-        "instruction-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "instruction-changed": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
     }
 
     def __init__(self, binaryFile, **kwargs):
@@ -312,7 +313,7 @@ class Model(GObject.GObject):
         instr = self.get_instruction(instrAddress)
         operand = instr.operands[operandIndex]
         instr.operands[operandIndex] = operand._replace(kind=kind)
-        self.emit("instruction-changed")
+        self.emit("instruction-changed", instrAddress)
 
     def get_function(self, address):
         if isinstance(address, str):
@@ -405,7 +406,7 @@ class Model(GObject.GObject):
         if param.name == "noreturn":
             self._clear_function_cache()
         elif param.name == "stackframe":
-            self.emit("instruction-changed")
+            self.emit("instruction-changed", -1)
         else:
             print("function data", param.name, "changed; ignoring")
 

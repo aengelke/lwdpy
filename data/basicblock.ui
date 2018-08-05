@@ -10,7 +10,9 @@
           <class name="header" />
         </style>
         <child>
-          <object class="GtkLabel" id="headerLabel" />
+          <object class="GtkLabel" id="headerLabel">
+            <property name="label" bind-source="LWBasicBlockView" bind-property="name" />
+          </object>
         </child>
       </object>
     </child>

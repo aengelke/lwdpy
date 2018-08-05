@@ -1,8 +1,9 @@
 
 from gi.repository import GObject, Gtk, Gdk
 
-from model import FunctionData, LabelKind, OperandKind, RegionKind
-from immediatePopover import ImmediatePopover
+from lwd import profile
+from lwd.model import FunctionData, LabelKind, OperandKind, RegionKind
+from lwd.immediatePopover import ImmediatePopover
 
 
 class RegionView(Gtk.Button):
@@ -54,7 +55,6 @@ RegionView.set_css_name("region")
 class BasicBlockView(Gtk.Box):
     __gtype_name__ = "LWBasicBlockView"
     __gtemplate_children__ = [
-        "headerLabel",
         "listBox",
         "popover",
         "nameEntry",
@@ -71,8 +71,12 @@ class BasicBlockView(Gtk.Box):
 
         self.viewModel = viewModel
         self.index = index
+        self.basicBlock = basicBlock
 
+        self.connect("realize", self.on_realize, basicBlock)
 
+    @profile
+    def on_realize(self, bbView, basicBlock):
         self.popover.set_default_widget(self.nameButton)
         self.popover.get_child().show_all()
         if not basicBlock.data or not isinstance(basicBlock.data, FunctionData):
@@ -96,7 +100,7 @@ class BasicBlockView(Gtk.Box):
                     regionViews.append(None)
                     regionViewsBox.pack_start(label, False, False, 0)
                 else:
-                    regionView = RegionView(viewModel, (index, instrIndex, regionIndex), region)
+                    regionView = RegionView(self.viewModel, (self.index, instrIndex, regionIndex), region)
                     regionViews.append(regionView)
                     regionViewsBox.pack_start(regionView, False, False, 0)
             commentLabel = Gtk.Label()
@@ -111,12 +115,19 @@ class BasicBlockView(Gtk.Box):
             self.listBox.add(line)
             self.instructions.append((regionViews, commentLabel))
         self.update_texts(basicBlock)
+        self.show_all()
 
     def on_clicked(self, *args):
         print(args)
 
+    @GObject.Property(type=str, default="")
+    def name(self):
+        return self.basicBlock.name
+
     def update_texts(self, basicBlock):
-        self.headerLabel.set_label(basicBlock.name)
+        self.basicBlock = basicBlock
+        self.notify("name")
+        # self.name = "" # Trigger update
         self.nameEntry.set_text(basicBlock.name)
 
         if basicBlock.data and isinstance(basicBlock.data, FunctionData):

@@ -1,7 +1,7 @@
 
 from gi.repository import Gtk
 
-from model import OperandKind, RegionKind
+from lwd.model import OperandKind, RegionKind
 
 
 KIND_GROUPS = {

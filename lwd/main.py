@@ -1,21 +1,14 @@
-#!/usr/bin/env python3
 
 import argparse
 import pickle
 import os.path
 import sys
 
-import gi
-gi.require_version('Gtk', '3.0')
 from gi.repository import GObject, GLib, Gio, Gtk, Gdk
 
-base_path = os.path.abspath(os.path.dirname(__file__))
-resource_path = os.path.join(base_path, '../data/org.lwd.LWD.gresource')
-resource = Gio.Resource.load(resource_path)._register()
-
-from model import Model
-from viewmodel import FunctionTableViewModel
-from cfgView import CFGView
+from lwd.model import Model
+from lwd.viewmodel import FunctionTableViewModel
+from lwd.cfgView import CFGView
 
 
 class Window2(object):
@@ -46,6 +39,7 @@ class Window2(object):
     def cfg_show_function(self, viewModel, address):
         current = self.graphBin.get_child()
         if current:
+            self.cfgView.destroy()
             current.destroy()
 
         if address:
@@ -84,15 +78,6 @@ def main():
     # print(m2.get_function(options.symbols[0]))
     # print(m2)
 
-    style_provider = Gtk.CssProvider()
-    style_provider.load_from_resource("/org/lwd/LWD/lwd.css")
-
-    Gtk.StyleContext.add_provider_for_screen(
-        Gdk.Screen.get_default(),
-        style_provider,
-        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-    )
-
     # TODO: Use Gtk.Application
     wnd = Window2(model)
 
@@ -102,6 +87,3 @@ def main():
         pickle.dump(model, f)
 
     return 0
-
-if __name__ == "__main__":
-    sys.exit(main())

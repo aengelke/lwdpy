@@ -4,7 +4,8 @@ from collections import namedtuple
 import graphviz
 from gi.repository import GLib, GObject, Gtk
 
-from model import OperandKind, OperandType
+from lwd import profile
+from lwd.model import OperandKind, OperandType
 
 class FunctionTableViewModel(GObject.GObject):
     __gsignals__ = {
@@ -84,9 +85,15 @@ class CFGViewModel(GObject.GObject):
         self.basicBlockAddresses = []
         self.basicBlockViews = []
         self.layoutTimeout = None
-        self.model.connect("name-changed", self.on_name_changed)
-        self.model.connect("instruction-changed", self.on_name_changed)
-        self.model.connect("cfg-changed", self.on_cfg_changed)
+        self.sig1 = self.model.connect("name-changed", self.on_name_changed, True)
+        self.sig2 = self.model.connect("instruction-changed", self.on_name_changed, False)
+        self.sig3 = self.model.connect("cfg-changed", self.on_cfg_changed)
+
+    def destroy(self):
+        if self.layoutTimeout: GLib.source_remove(self.layoutTimeout)
+        self.model.disconnect(self.sig1)
+        self.model.disconnect(self.sig2)
+        self.model.disconnect(self.sig3)
 
     def init(self):
         self.function = self.model.get_function(self.address)
@@ -94,15 +101,20 @@ class CFGViewModel(GObject.GObject):
             [-1000, -1000, 0, 0] for _ in self.function.basicBlocks
         ]
         self.basicBlockAddresses = [bb.address for bb in self.function.basicBlocks]
-        self.update_texts("cfg-changed")
+        GLib.idle_add(self.update_texts, "cfg-changed")
 
-    def on_name_changed(self, *args):
-        self.update_texts()
+    def on_name_changed(self, model, address, fullUpdate):
+        # If address is -1, more than one instruction changed.
+        fullUpdate = fullUpdate or address == -1
+        print(fullUpdate)
+        GLib.idle_add(self.update_texts)
 
     def on_cfg_changed(self, model):
         self.init()
 
+    @profile
     def update_texts(self, signalName="text-changed"):
+        print("CFG UPText")
         self.basicBlockViews = []
         for basicBlock in self.function.basicBlocks:
             instructionViews = []
@@ -130,6 +142,7 @@ class CFGViewModel(GObject.GObject):
                         for bb in self.basicBlockViews]
         self.emit("highlight-changed", highlight)
 
+    @profile
     def layout(self):
         print("Relayout")
         bbMap = {}
@@ -193,9 +206,10 @@ class CFGViewModel(GObject.GObject):
         operandIndex = instr.operands.index(operand)
         self.model.set_operand_kind(instr.address, operandIndex, kind)
 
+    @profile
     def on_size_updated(self, index, width, height):
         position = self.basicBlockPositions[index]
         if position[2] != width or position[3] != height:
             position[2], position[3] = width, height
             if self.layoutTimeout: GLib.source_remove(self.layoutTimeout)
-            self.layoutTimeout = GLib.timeout_add(50, self.layout)
+            self.layoutTimeout = GLib.timeout_add(10, self.layout)
